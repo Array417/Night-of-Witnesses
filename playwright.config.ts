@@ -6,6 +6,7 @@ export default defineConfig({
   workers: 1,
   reporter: [
     ['list'],
+    ['json', { outputFile: '.omo/evidence/task-12-playwright.json' }],
     ['json', { outputFile: 'test-results/playwright-report.json' }],
   ],
   use: {
@@ -19,8 +20,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: process.env.PLAYWRIGHT_SERVER_CMD || 'npx vite preview --host 127.0.0.1 --port 3000 --strictPort',
-    url: 'http://127.0.0.1:3000',
+    command: process.env.PLAYWRIGHT_SERVER_CMD || 'npm run start',
+    url: 'http://127.0.0.1:3000/healthz',
     reuseExistingServer: !process.env.CI,
     timeout: 30000,
   },

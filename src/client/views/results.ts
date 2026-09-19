@@ -94,11 +94,13 @@ export function renderResults(
           ),
         ]
       ),
-      result.guestRoomCard
-        ? el('p', { style: 'margin-top: 0.75rem; font-size: 0.95rem;' }, [
-            `客房扣置卡牌：【${result.guestRoomCard.label}】`,
-          ])
-        : null,
+      ...(result.guestRoomCard
+        ? [
+            el('p', { style: 'margin-top: 0.75rem; font-size: 0.95rem;' }, [
+              `客房扣置卡牌：【${result.guestRoomCard.label}】`,
+            ]),
+          ]
+        : []),
     ]),
     // Ballots Breakdown
     el('section', { 'aria-labelledby': 'ballots-heading', style: 'margin-bottom: 1.5rem;' }, [

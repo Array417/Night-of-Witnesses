@@ -1,5 +1,26 @@
 import './styles.css';
 import { el, announce, showInlineAlert } from './ui/dom.ts';
+import { GameClient } from './net.ts';
+import * as session from './session.ts';
+
+declare global {
+  interface Window {
+    __NOW__?: {
+      GameClient: typeof GameClient;
+      session: typeof session;
+      client: GameClient;
+    };
+  }
+}
+
+const gameClient = new GameClient();
+if (typeof window !== 'undefined') {
+  window.__NOW__ = {
+    GameClient,
+    session,
+    client: gameClient,
+  };
+}
 
 function initBaseShell(): void {
   const app = document.getElementById('app');

@@ -506,8 +506,9 @@ function resolveRound(state: CanonicalGameState, detectiveForcedLocation?: Playe
     // In L3, L7, L8: if Lawyer selected a location, void that location occupant's ballot
     // (If not explicitly selected yet, check lawyerTargetLocation)
     const lawyerPlayer = state.players.find((p) => state.keptRoles[p.playerId]?.role === 'lawyer');
-    const voidedVoterId = lawyerPlayer && state.lawyerTargetLocation
-      ? state.players.find((p) => p.locationId === state.lawyerTargetLocation)?.playerId
+    const lawyerTargetLoc = state.lawyerTargetLocation || (lawyerPlayer ? state.votes[lawyerPlayer.playerId] : null);
+    const voidedVoterId = lawyerTargetLoc
+      ? state.players.find((p) => p.locationId === lawyerTargetLoc)?.playerId
       : null;
 
     // 2. Build ballots & calculate weights

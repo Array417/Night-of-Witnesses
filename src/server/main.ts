@@ -24,7 +24,10 @@ if (host === '127.0.0.1' || host === 'localhost') {
   }
 }
 
-const manager = new RoomManager();
+const testSeed = process.env.TEST_SEED;
+const manager = new RoomManager({
+  getSeed: testSeed ? () => testSeed : undefined,
+});
 const { server } = createServerInstance({
   clientDistDir: path.resolve('dist/client'),
   allowedOrigins,

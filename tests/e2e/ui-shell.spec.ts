@@ -85,14 +85,14 @@ test.describe('UI shell and accessible responsive foundation', () => {
     expect(durationNum).toBeLessThanOrEqual(0.01);
   });
 
-  test('failure scenario: submitting invalid sample form moves focus to inline role=alert and preserves input', async ({ page }) => {
+  test('failure scenario: submitting invalid form moves focus to inline role=alert and preserves input', async ({ page }) => {
     await page.goto('/');
 
-    const input = page.locator('#sample-name');
+    const input = page.locator('#player-name-input');
     await input.fill('ExistingText');
 
-    // Trigger validation failure by submitting with empty or invalid condition (e.g. checkbox unselected or empty required code)
-    const submitBtn = page.locator('#sample-submit-btn');
+    // Trigger validation failure by submitting join without valid 6-char room code
+    const submitBtn = page.locator('#btn-join-room');
     await submitBtn.click();
 
     // Focus must move to role=alert

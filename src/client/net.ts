@@ -25,6 +25,8 @@ export interface GameClientEvents {
   onRoomClosed?: (reason: string) => void;
 }
 
+type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
+
 const BACKOFF_DELAYS = [500, 1000, 2000, 4000, 8000];
 
 export class GameClient {
@@ -237,7 +239,7 @@ export class GameClient {
   }
 
   dispatchAction(
-    action: Omit<ClientMessage, 'actionId' | 'baseVersion'>
+    action: DistributiveOmit<ClientMessage, 'actionId' | 'baseVersion'>
   ): boolean {
     if (this.inFlightAction || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return false;

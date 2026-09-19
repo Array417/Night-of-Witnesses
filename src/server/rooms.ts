@@ -43,6 +43,7 @@ export interface RoomRecord {
 
 export interface RoomManagerOptions {
   getTime?: () => number;
+  getSeed?: (roomCode: string, actionType: 'create' | 'start' | 'rematch') => string;
 }
 
 type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : never;
@@ -51,9 +52,11 @@ export type ClientGameAction = DistributiveOmit<GameAction, 'playerId'> & { play
 export class RoomManager {
   private readonly rooms = new Map<string, RoomRecord>();
   private readonly getTime: () => number;
+  private readonly getSeed?: (roomCode: string, actionType: 'create' | 'start' | 'rematch') => string;
 
   constructor(options: RoomManagerOptions = {}) {
     this.getTime = options.getTime || (() => Date.now());
+    this.getSeed = options.getSeed;
   }
 
   private generateCode(): string {
@@ -104,7 +107,7 @@ export class RoomManager {
       roomCode: code,
       hostPlayerId,
       hostPlayerName: trimmed,
-      seed: `${code}-${now}`,
+      seed: this.getSeed ? this.getSeed(code, 'create') : `${code}-${now}`,
     });
 
     const hostSeat: SeatRecord = {
@@ -303,6 +306,11 @@ export class RoomManager {
     // 3. Execute authoritative reducer with seat's playerId
     try {
       const gameAction = { ...action, playerId } as GameAction;
+      if (gameAction.type === 'start_game' && this.getSeed && !gameAction.seed) {
+        gameAction.seed = this.getSeed(roomCode, 'start');
+      } else if (gameAction.type === 'rematch' && this.getSeed && !gameAction.nextSeed) {
+        gameAction.nextSeed = this.getSeed(roomCode, 'rematch');
+      }
       room.state = reduceGame(room.state, gameAction);
     } catch (err: unknown) {
       if (err instanceof RulesError) {
@@ -339,6 +347,7 @@ export class RoomManager {
       if (!seat.connected && now - seat.lastSeenAt >= RECONNECT_GRACE_MS) {
         // Expiry condition reached
         if (room.state.phase === 'lobby') {
+          const wasHost = room.state.hostPlayerId === playerId;
           // Remove player from lobby
           room.seats.delete(playerId);
           room.seatTokens.delete(seat.seatToken);
@@ -346,6 +355,18 @@ export class RoomManager {
           if (pIdx !== -1) {
             room.state.players.splice(pIdx, 1);
             room.state.version += 1;
+          }
+          if (wasHost) {
+            const connectedSeats = Array.from(room.seats.values())
+              .filter((s) => s.connected)
+              .sort((a, b) => a.joinedAt - b.joinedAt);
+            if (connectedSeats.length > 0) {
+              const newHost = connectedSeats[0];
+              room.state.hostPlayerId = newHost.playerId;
+              for (const p of room.state.players) {
+                p.isHost = p.playerId === newHost.playerId;
+              }
+            }
           }
         } else if (room.state.phase === 'draft') {
           draftNeedsCancel = true;

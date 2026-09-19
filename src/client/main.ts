@@ -1,7 +1,12 @@
 import './styles.css';
-import { el, announce, showInlineAlert } from './ui/dom.ts';
+import { announce, showInlineAlert } from './ui/dom.ts';
 import { GameClient } from './net.ts';
 import * as session from './session.ts';
+import type { PlayerProjection } from '../shared/state.ts';
+import { renderHome } from './views/home.ts';
+import { renderLobby } from './views/lobby.ts';
+import { renderGame } from './views/game.ts';
+import { renderResults } from './views/results.ts';
 
 declare global {
   interface Window {
@@ -13,91 +18,95 @@ declare global {
   }
 }
 
-const gameClient = new GameClient();
-if (typeof window !== 'undefined') {
-  window.__NOW__ = {
-    GameClient,
-    session,
-    client: gameClient,
-  };
+let lastPhase: string | null = null;
+let lastVersion: number = -1;
+
+function renderCurrentView(app: HTMLElement, client: GameClient): void {
+  const projection = client.getProjection();
+
+  if (!projection) {
+    lastPhase = null;
+    renderHome(app, client);
+    return;
+  }
+
+  // Phase transition announcement
+  if (projection.phase !== lastPhase) {
+    lastPhase = projection.phase;
+    const phaseNames: Record<string, string> = {
+      lobby: '已回到遊戲大廳。',
+      draft: '遊戲開始，進入抽牌傳遞階段。',
+      discussion: '進入自由討論階段。',
+      voting: '進入投票指認階段。',
+      resolution: '遊戲結算完成。',
+    };
+    if (phaseNames[projection.phase]) {
+      announce(phaseNames[projection.phase]);
+    }
+  }
+
+  lastVersion = projection.version;
+
+  switch (projection.phase) {
+    case 'lobby':
+      renderLobby(app, projection, client);
+      break;
+    case 'draft':
+    case 'discussion':
+    case 'voting':
+      renderGame(app, projection, client);
+      break;
+    case 'resolution':
+    case 'game_over':
+      renderResults(app, projection, client);
+      break;
+    default:
+      renderHome(app, client);
+      break;
+  }
 }
 
-function initBaseShell(): void {
+function initApp(): void {
   const app = document.getElementById('app');
   if (!app) return;
 
-  app.innerHTML = '';
-
-  const header = el('header', { class: 'panel' }, [
-    el('h1', {}, ['目擊者之夜']),
-    el('p', { class: 'text-secondary' }, ['繁體中文多人推理聚會遊戲']),
-  ]);
-
-  const formContainer = el('div', { class: 'panel', id: 'sample-panel' }, [
-    el('h2', {}, ['玩家名稱設定']),
-    el('form', { id: 'sample-form', novalidate: true }, [
-      el('div', { class: 'form-group' }, [
-        el('label', { for: 'sample-name' }, ['您的暱稱']),
-        el('input', {
-          id: 'sample-name',
-          name: 'name',
-          type: 'text',
-          maxlength: '24',
-          placeholder: '請輸入 1 至 24 個字元',
-          required: true,
-        }),
-      ]),
-      el('div', { class: 'form-group' }, [
-        el('label', { for: 'sample-room-code' }, ['房間代碼（加入現有遊戲）']),
-        el('input', {
-          id: 'sample-room-code',
-          name: 'roomCode',
-          type: 'text',
-          maxlength: '6',
-          placeholder: '例如：ABCDEF',
-        }),
-      ]),
-      el('div', { class: 'btn-group' }, [
-        el(
-          'button',
-          {
-            id: 'sample-submit-btn',
-            type: 'submit',
-            class: 'btn btn-primary',
-          },
-          ['確認送出']
-        ),
-      ]),
-    ]),
-  ]);
-
-  const form = formContainer.querySelector('#sample-form') as HTMLFormElement;
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const nameInput = document.getElementById('sample-name') as HTMLInputElement;
-    const roomInput = document.getElementById('sample-room-code') as HTMLInputElement;
-
-    // Validation condition: if room code is empty when joining, or name is empty
-    if (!nameInput.value.trim()) {
-      showInlineAlert(formContainer, '請輸入有效的玩家暱稱。');
-      return;
-    }
-    if (!roomInput.value.trim()) {
-      showInlineAlert(formContainer, '請輸入 6 碼房間代碼。');
-      return;
-    }
-
-    announce(`已提交：${nameInput.value.trim()}`);
+  const client = new GameClient({
+    onProjection: (p: PlayerProjection) => {
+      renderCurrentView(app, client);
+    },
+    onError: (code: string, message: string) => {
+      showInlineAlert(app, message);
+    },
+    onStatusChange: (status) => {
+      if (status === 'disconnected') {
+        announce('與伺服器斷線，正在嘗試重新連線...');
+      } else if (status === 'connected') {
+        announce('已成功連線至伺服器。');
+      }
+    },
+    onRoomClosed: (reason) => {
+      announce(`房間已關閉：${reason}`);
+      renderHome(app, client);
+    },
   });
 
-  app.appendChild(header);
-  app.appendChild(formContainer);
-  announce('目擊者之夜介面已載入。');
+  if (typeof window !== 'undefined') {
+    window.__NOW__ = {
+      GameClient,
+      session,
+      client,
+    };
+  }
+
+  // Connect WebSocket
+  client.connect();
+
+  // Initial render
+  renderCurrentView(app, client);
 }
 
-// Initialize on DOMContentLoaded or immediately if already loaded
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initBaseShell);
+  document.addEventListener('DOMContentLoaded', initApp);
 } else {
-  initBaseShell();
+  initApp();
 }

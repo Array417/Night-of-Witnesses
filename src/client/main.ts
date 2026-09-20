@@ -3,6 +3,7 @@ import { announce, showInlineAlert } from './ui/dom.ts';
 import { GameClient } from './net.ts';
 import * as session from './session.ts';
 import type { PlayerProjection } from '../shared/state.ts';
+import { ROLES } from '../shared/rules.ts';
 import { renderHome } from './views/home.ts';
 import { renderLobby } from './views/lobby.ts';
 import { renderGame } from './views/game.ts';
@@ -33,7 +34,23 @@ function renderCurrentView(app: HTMLElement, client: GameClient): void {
   // Phase transition announcement and audio cue
   if (projection.phase !== lastPhase) {
     lastPhase = projection.phase;
-    audioManager.playCue('phase_change');
+    if (projection.phase === 'resolution' || projection.phase === 'game_over') {
+      const myId = projection.viewerId;
+      const myAssignment = projection.result?.assignedRoles.find((a) => a.playerId === myId);
+      if (myAssignment && projection.result) {
+        const myFaction = ROLES[myAssignment.role]?.faction;
+        if (myFaction === projection.result.winningFaction) {
+          audioManager.playCue('win');
+        } else {
+          audioManager.playCue('loss');
+        }
+      } else {
+        audioManager.playCue('phase_change');
+      }
+    } else {
+      audioManager.playCue('phase_change');
+    }
+
     const phaseNames: Record<string, string> = {
       lobby: '已回到遊戲大廳。',
       draft: '遊戲開始，進入抽牌傳遞階段。',

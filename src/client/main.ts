@@ -70,12 +70,36 @@ function renderCurrentView(app: HTMLElement, client: GameClient): void {
 import { renderShowcase } from './showcase/index.ts';
 import { audioManager, mountAudioControls } from './audio/manager.ts';
 
+function updateConnectionBadge(status: string): void {
+  let badge = document.getElementById('connection-status-badge');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'connection-status-badge';
+    badge.className = 'connection';
+    badge.style.position = 'fixed';
+    badge.style.top = '12px';
+    badge.style.right = '12px';
+    badge.style.zIndex = '900';
+    document.body.appendChild(badge);
+  }
+  badge.setAttribute('data-status', status);
+  const labels: Record<string, string> = {
+    connecting: '連線中',
+    connected: '已連線',
+    reconnecting: '重新連線中',
+    disconnected: '已斷線',
+    error: '連線錯誤',
+  };
+  badge.innerHTML = `<span>${labels[status] || status}</span>`;
+}
+
 function initApp(): void {
   const app = document.getElementById('app');
   if (!app) return;
 
-  // Mount persistent audio controls outside #app
+  // Mount persistent audio controls and connection badge outside #app
   mountAudioControls();
+  updateConnectionBadge('connecting');
 
   if (window.location.search.includes('showcase') || window.location.pathname.startsWith('/showcase')) {
     renderShowcase(app);
@@ -88,19 +112,24 @@ function initApp(): void {
       renderCurrentView(app, client);
     },
     onError: (code: string, message: string) => {
+      updateConnectionBadge('error');
       audioManager.playCue('error');
       showInlineAlert(app, message);
     },
     onStatusChange: (status) => {
+      updateConnectionBadge(status);
       if (status === 'disconnected') {
         audioManager.playCue('disconnect');
         announce('與伺服器斷線，正在嘗試重新連線...');
       } else if (status === 'connected') {
         audioManager.playCue('connect');
         announce('已成功連線至伺服器。');
+      } else if (status === 'reconnecting') {
+        announce('正在嘗試重新連線至伺服器...');
       }
     },
     onRoomClosed: (reason) => {
+      updateConnectionBadge('disconnected');
       audioManager.playCue('disconnect');
       audioManager.syncAmbience({ hasActiveRoom: false });
       announce(`房間已關閉：${reason}`);

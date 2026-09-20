@@ -11,9 +11,11 @@ export function renderHome(
   const initialRoomCode = getRoomCodeFromUrl() || '';
 
   const panel = el('div', { class: 'panel', id: 'home-panel' }, [
-    el('header', {}, [
+    el('header', { style: 'text-align: center; margin-bottom: 24px;' }, [
       el('h1', {}, ['目擊者之夜']),
-      el('p', { class: 'text-secondary' }, ['3 至 6 人繁體中文私人推理聚會遊戲']),
+      el('p', { class: 'label-hint', style: 'font-size: 1rem;' }, [
+        '3 至 6 人繁體中文私人推理聚會遊戲',
+      ]),
     ]),
     el('div', { class: 'form-group' }, [
       el('label', { for: 'player-name-input' }, ['玩家暱稱']),
@@ -22,16 +24,19 @@ export function renderHome(
         type: 'text',
         maxlength: '24',
         placeholder: '請輸入 1 至 24 個字元',
+        autocomplete: 'nickname',
       }),
     ]),
-    el('div', { class: 'btn-group', style: 'margin-bottom: 1.5rem;' }, [
+    el('div', { class: 'btn-group', style: 'margin-bottom: 20px;' }, [
       el(
         'button',
-        { id: 'btn-create-room', type: 'button', class: 'btn btn-primary btn-block' },
+        { id: 'btn-create-room', type: 'button', class: 'primary-button btn-block' },
         ['建立新房間']
       ),
     ]),
-    el('hr', { style: 'border: 0; border-top: 1px solid var(--color-border); margin: 1.5rem 0;' }),
+    el('hr', {
+      style: 'border: 0; border-top: 1px solid var(--border); margin: 24px 0;',
+    }),
     el('div', { class: 'form-group' }, [
       el('label', { for: 'room-code-input' }, ['加入現有房間代碼']),
       el('input', {
@@ -40,12 +45,14 @@ export function renderHome(
         maxlength: '6',
         value: initialRoomCode,
         placeholder: '6 碼英文與數字（如：ABCDEF）',
+        autocomplete: 'off',
+        style: 'text-transform: uppercase; letter-spacing: 0.1em; font-family: var(--font-mono);',
       }),
     ]),
     el('div', { class: 'btn-group' }, [
       el(
         'button',
-        { id: 'btn-join-room', type: 'button', class: 'btn btn-secondary btn-block' },
+        { id: 'btn-join-room', type: 'button', class: 'secondary-button btn-block' },
         ['加入房間']
       ),
     ]),

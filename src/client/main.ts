@@ -30,9 +30,10 @@ function renderCurrentView(app: HTMLElement, client: GameClient): void {
     return;
   }
 
-  // Phase transition announcement
+  // Phase transition announcement and audio cue
   if (projection.phase !== lastPhase) {
     lastPhase = projection.phase;
+    audioManager.playCue('phase_change');
     const phaseNames: Record<string, string> = {
       lobby: '已回到遊戲大廳。',
       draft: '遊戲開始，進入抽牌傳遞階段。',
@@ -67,10 +68,14 @@ function renderCurrentView(app: HTMLElement, client: GameClient): void {
 }
 
 import { renderShowcase } from './showcase/index.ts';
+import { audioManager, mountAudioControls } from './audio/manager.ts';
 
 function initApp(): void {
   const app = document.getElementById('app');
   if (!app) return;
+
+  // Mount persistent audio controls outside #app
+  mountAudioControls();
 
   if (window.location.search.includes('showcase') || window.location.pathname.startsWith('/showcase')) {
     renderShowcase(app);
@@ -79,19 +84,25 @@ function initApp(): void {
 
   const client = new GameClient({
     onProjection: (p: PlayerProjection) => {
+      audioManager.syncAmbience({ hasActiveRoom: true });
       renderCurrentView(app, client);
     },
     onError: (code: string, message: string) => {
+      audioManager.playCue('error');
       showInlineAlert(app, message);
     },
     onStatusChange: (status) => {
       if (status === 'disconnected') {
+        audioManager.playCue('disconnect');
         announce('與伺服器斷線，正在嘗試重新連線...');
       } else if (status === 'connected') {
+        audioManager.playCue('connect');
         announce('已成功連線至伺服器。');
       }
     },
     onRoomClosed: (reason) => {
+      audioManager.playCue('disconnect');
+      audioManager.syncAmbience({ hasActiveRoom: false });
       announce(`房間已關閉：${reason}`);
       renderHome(app, client);
     },

@@ -417,9 +417,12 @@ describe('authoritative wire journeys and recovery contracts', () => {
       baseVersion: c1.lastProjection!.version,
       level: 'L7',
     });
-    await c2.waitFor((m) => m.type === 'projection' && m.projection.level === 'L7');
-    await c3.waitFor((m) => m.type === 'projection' && m.projection.level === 'L7');
-    await c4.waitFor((m) => m.type === 'projection' && m.projection.level === 'L7');
+    await Promise.all([
+      c1.waitFor((m) => m.type === 'projection' && m.projection.level === 'L7'),
+      c2.waitFor((m) => m.type === 'projection' && m.projection.level === 'L7'),
+      c3.waitFor((m) => m.type === 'projection' && m.projection.level === 'L7'),
+      c4.waitFor((m) => m.type === 'projection' && m.projection.level === 'L7'),
+    ]);
 
     // Ready all sequentially
     c1.send({

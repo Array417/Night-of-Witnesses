@@ -86,6 +86,15 @@ export class RoomManager {
     projection: PlayerProjection;
   } {
     if (this.rooms.size >= MAX_ROOMS) {
+      const now = this.getTime();
+      for (const [c, r] of this.rooms.entries()) {
+        const allDisconnected = Array.from(r.seats.values()).every((s) => !s.connected);
+        if (allDisconnected || now - r.lastActivityAt >= EMPTY_ROOM_TTL_MS) {
+          this.rooms.delete(c);
+        }
+      }
+    }
+    if (this.rooms.size >= MAX_ROOMS) {
       throw new RoomError('ROOM_UNAVAILABLE', '房間不存在或無法加入');
     }
 

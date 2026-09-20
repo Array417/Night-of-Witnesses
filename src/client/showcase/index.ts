@@ -177,16 +177,17 @@ export function renderShowcase(container: HTMLElement): void {
   const confirmBtn = container.querySelector('#btn-dialog-confirm');
 
   if (openBtn && dialog && cancelBtn && confirmBtn) {
+    dialog.addEventListener('close', () => {
+      openBtn.focus();
+    });
     openBtn.addEventListener('click', () => {
       dialog.showModal();
     });
     cancelBtn.addEventListener('click', () => {
       dialog.close();
-      openBtn.focus();
     });
     confirmBtn.addEventListener('click', () => {
       dialog.close();
-      openBtn.focus();
     });
   }
 }

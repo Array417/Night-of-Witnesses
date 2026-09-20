@@ -114,14 +114,14 @@ function initApp(): void {
   const app = document.getElementById('app');
   if (!app) return;
 
-  // Mount persistent audio controls and connection badge outside #app
-  mountAudioControls();
-  updateConnectionBadge('connecting');
-
   if (window.location.search.includes('showcase') || window.location.pathname.startsWith('/showcase')) {
     renderShowcase(app);
     return;
   }
+
+  // Mount persistent audio controls and connection badge outside #app
+  mountAudioControls();
+  updateConnectionBadge('connecting');
 
   const client = new GameClient({
     onProjection: (p: PlayerProjection) => {

@@ -48,10 +48,10 @@ export function createServerInstance(options: ServerInstanceOptions = {}): {
       return;
     }
 
-    // 2. Robots.txt allow crawling
+    // 2. Robots.txt allow crawling while disallowing websocket endpoints
     if (pathname === '/robots.txt') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('User-agent: *\nAllow: /\n');
+      res.end('User-agent: *\nAllow: /\nDisallow: /ws/\n');
       return;
     }
 

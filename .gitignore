@@ -6,3 +6,5 @@ blob-report/
 .cache/
 .codegraph/
 .omo/evidence/
+.omo/
+design/

@@ -28,24 +28,27 @@ export function renderLobby(
   const validLevels = VALID_LEVELS_BY_PLAYERS[playerCount] || [];
 
   const panel = el('div', { class: 'panel', id: 'lobby-panel' }, [
-    el('header', {}, [
-      el('h1', {}, [`房間代碼：${projection.roomCode}`]),
-      el('p', { class: 'text-secondary' }, [
+    el('header', { style: 'margin-bottom: 24px;' }, [
+      el('h1', { style: 'margin-bottom: 8px;' }, [`房間代碼：${projection.roomCode}`]),
+      el('p', { class: 'label-hint', style: 'font-size: 1rem;' }, [
         `目前人數：${playerCount} / 6 人（需 3 至 6 人方可開始）`,
       ]),
-      el('div', { class: 'btn-group', style: 'margin-bottom: 1rem;' }, [
+      el('div', { class: 'btn-group', style: 'margin-top: 12px;' }, [
         el(
           'button',
-          { id: 'btn-copy-link', type: 'button', class: 'btn btn-secondary' },
+          { id: 'btn-copy-link', type: 'button', class: 'secondary-button' },
           ['複製邀請連結']
         ),
       ]),
     ]),
-    el('section', { 'aria-labelledby': 'roster-heading' }, [
+    el('section', { 'aria-labelledby': 'roster-heading', style: 'margin-bottom: 24px;' }, [
       el('h2', { id: 'roster-heading' }, ['玩家名單']),
       el(
         'ul',
-        { id: 'player-roster', style: 'list-style: none; margin-bottom: 1.5rem;' },
+        {
+          id: 'player-roster',
+          style: 'list-style: none; display: flex; flex-direction: column; gap: 8px; margin-top: 8px;',
+        },
         projection.players.map((p) => {
           const badges = [];
           if (p.isHost) badges.push('【房主】');
@@ -53,8 +56,22 @@ export function renderLobby(
           if (!p.connected) badges.push('【斷線中】');
 
           const children: (Node | string)[] = [
-            el('strong', {}, [p.playerName]),
-            ` ${badges.join(' ')}`,
+            el(
+              'span',
+              {
+                style:
+                  'font-family: var(--font-serif); font-size: 1.05rem; font-weight: 700; color: #fff0d2; word-break: break-all;',
+              },
+              [p.playerName]
+            ),
+            el(
+              'span',
+              {
+                style:
+                  'font-size: 0.85rem; color: var(--muted); margin-left: 8px; flex-shrink: 0;',
+              },
+              [badges.join(' ')]
+            ),
           ];
 
           if (isHost && !p.isHost) {
@@ -62,8 +79,9 @@ export function renderLobby(
               'button',
               {
                 type: 'button',
-                class: 'btn btn-secondary',
-                style: 'padding: 0.25rem 0.5rem; margin-left: 0.5rem;',
+                class: 'danger-button',
+                style:
+                  'padding: 4px 10px; margin-left: auto; min-height: 36px; font-size: 0.85rem; flex-shrink: 0;',
                 'aria-label': `踢除玩家 ${p.playerName}`,
               },
               ['踢除']
@@ -77,11 +95,18 @@ export function renderLobby(
             children.push(kickBtn);
           }
 
-          return el('li', { style: 'padding: 0.5rem 0; border-bottom: 1px solid var(--color-border);' }, children);
+          return el(
+            'li',
+            {
+              style:
+                'padding: 10px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-sm); display: flex; align-items: center; flex-wrap: wrap; gap: 8px;',
+            },
+            children
+          );
         })
       ),
     ]),
-    el('section', { 'aria-labelledby': 'level-heading' }, [
+    el('section', { 'aria-labelledby': 'level-heading', style: 'margin-bottom: 24px;' }, [
       el('h2', { id: 'level-heading' }, ['規則配置等級']),
       el('div', { class: 'form-group' }, [
         el('label', { for: 'level-select' }, ['選擇配置等級']),
@@ -95,15 +120,12 @@ export function renderLobby(
                 return opt;
               })
             )
-          : el(
-              'input',
-              {
-                id: 'level-select',
-                type: 'text',
-                readonly: true,
-                value: LEVEL_DESCRIPTIONS[projection.level] || projection.level,
-              }
-            ),
+          : el('input', {
+              id: 'level-select',
+              type: 'text',
+              readonly: true,
+              value: LEVEL_DESCRIPTIONS[projection.level] || projection.level,
+            }),
       ]),
     ]),
     el('div', { class: 'btn-group' }, [
@@ -112,7 +134,7 @@ export function renderLobby(
         {
           id: 'btn-toggle-ready',
           type: 'button',
-          class: myReady ? 'btn btn-secondary' : 'btn btn-primary',
+          class: myReady ? 'secondary-button' : 'primary-button',
         },
         [myReady ? '取消準備' : '準備完成']
       ),
@@ -123,8 +145,12 @@ export function renderLobby(
               {
                 id: 'btn-start-game',
                 type: 'button',
-                class: 'btn btn-primary',
-                disabled: !(playerCount >= 3 && playerCount <= 6 && projection.players.every((p) => p.ready)),
+                class: 'primary-button',
+                disabled: !(
+                  playerCount >= 3 &&
+                  playerCount <= 6 &&
+                  projection.players.every((p) => p.ready)
+                ),
               },
               ['開始遊戲']
             ),

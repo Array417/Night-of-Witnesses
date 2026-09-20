@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   reporter: [
     ['list'],
-    ['json', { outputFile: '.omo/evidence/task-12-playwright.json' }],
+    ['json', { outputFile: '.omo/evidence/opendesign-task-8-playwright.json' }],
     ['json', { outputFile: 'test-results/playwright-report.json' }],
   ],
   use: {
@@ -17,6 +17,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'mobile-chromium',
+      use: {
+        ...devices['Pixel 5'],
+        hasTouch: true,
+        isMobile: true,
+      },
     },
   ],
   webServer: {

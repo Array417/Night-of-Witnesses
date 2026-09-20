@@ -48,10 +48,10 @@ export function createServerInstance(options: ServerInstanceOptions = {}): {
       return;
     }
 
-    // 2. Robots.txt disallow all
+    // 2. Robots.txt allow crawling
     if (pathname === '/robots.txt') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('User-agent: *\nDisallow: /\n');
+      res.end('User-agent: *\nAllow: /\n');
       return;
     }
 

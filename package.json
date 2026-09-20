@@ -8,12 +8,13 @@
   },
   "scripts": {
     "check": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "node --test --test-reporter=tap \"tests/unit/**/*.test.ts\" \"tests/integration/**/*.test.ts\"",
+    "test": "node --test --test-concurrency=1 --test-reporter=tap \"tests/unit/**/*.test.ts\" \"tests/integration/**/*.test.ts\"",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "build": "vite build && tsc -p tsconfig.server.json",
     "start": "node dist/server/src/server/main.js",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:manual": "node scripts/open-3p.js"
   },
   "dependencies": {
     "ws": "^8.18.1",

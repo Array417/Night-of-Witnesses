@@ -66,9 +66,16 @@ function renderCurrentView(app: HTMLElement, client: GameClient): void {
   }
 }
 
+import { renderShowcase } from './showcase/index.ts';
+
 function initApp(): void {
   const app = document.getElementById('app');
   if (!app) return;
+
+  if (window.location.search.includes('showcase') || window.location.pathname.startsWith('/showcase')) {
+    renderShowcase(app);
+    return;
+  }
 
   const client = new GameClient({
     onProjection: (p: PlayerProjection) => {

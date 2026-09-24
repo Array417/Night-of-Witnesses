@@ -81,6 +81,43 @@ export const ROLES: Record<RoleId, RoleDef> = {
   guest: { id: 'guest', label: '房客', faction: 'witness_faction' },
 };
 
+// Display-only metadata. Never serialized on the wire: Card, cardSchema,
+// projections, protocol messages, and logs are untouched by this table.
+export const ROLE_DETAILS: Record<RoleId, { objective: string; ability: string }> = {
+  murderer: {
+    objective: '避開鍋爐室並存活到結算；只要自己不在鍋爐室，兇手陣營即獲勝，被送入鍋爐室則目擊者陣營獲勝。',
+    ability: '沒有主動技能，只能靠選牌隱藏身份，並在投票中把嫌疑引向別處。',
+  },
+  accomplice: {
+    objective: '協助兇手避開鍋爐室；兇手存活即一同獲勝，兇手未在場時由共犯單獨撐起兇手陣營。',
+    ability: '沒有主動技能，靠選牌與投票掩護兇手，避免兇手被送入鍋爐室。',
+  },
+  bomber: {
+    objective: '設法讓自己被送入鍋爐室；一旦進入鍋爐室即單獨獲勝，不與其他陣營分享勝利。',
+    ability: '沒有主動技能，被集中投票反而有利，靠言行誘使眾人把自己送入鍋爐室。',
+  },
+  lawyer: {
+    objective: '找出兇手並把兇手送入鍋爐室，協助目擊者陣營獲勝。',
+    ability: '結算時可讓自己所選位置上那名玩家投出的整份選票作廢，該票權重歸零。',
+  },
+  rich_merchant: {
+    objective: '找出兇手並把兇手送入鍋爐室，協助目擊者陣營獲勝。',
+    ability: '自己投出的選票權重為2，只要未被作廢即以雙倍票數計入最高票判定。',
+  },
+  detective: {
+    objective: '找出兇手並把兇手送入鍋爐室，協助目擊者陣營獲勝。',
+    ability: '討論階段限用一次，指定一個有人位置後立即結算，直接把該位置的玩家送入鍋爐室，不經投票。',
+  },
+  butler: {
+    objective: '找出兇手並把兇手送入鍋爐室，協助目擊者陣營獲勝。',
+    ability: '討論階段限用一次查看牌面，看過牌後必須棄權，不能再參與投票。',
+  },
+  guest: {
+    objective: '沒有特殊身份，與目擊者陣營同進退；把兇手送入鍋爐室即獲勝。',
+    ability: '沒有主動技能，靠觀察、證詞與投票找出兇手。',
+  },
+};
+
 export const PLAYER_LOCATIONS: Record<PlayerLocationId, LocationDef> = {
   lounge: { id: 'lounge', label: '交誼廳' },
   gallery: { id: 'gallery', label: '畫廊' },

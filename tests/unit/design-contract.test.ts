@@ -6,6 +6,66 @@ import { join } from 'node:path';
 const ROOT_DIR = join(import.meta.dirname, '../../');
 const DESIGN_MD_PATH = join(ROOT_DIR, 'DESIGN.md');
 const EVIDENCE_PATH = join(ROOT_DIR, '.omo/evidence/opendesign-task-1-contract.json');
+const INTERACTION_EVIDENCE_PATH = join(
+  ROOT_DIR,
+  '.omo/evidence/task-1-game-table-interaction-redesign-contract.json'
+);
+
+export interface InteractionContractResult {
+  markersFound: string[];
+  markersMissing: string[];
+  isValid: boolean;
+}
+
+/**
+ * Amended contract markers for the table-centric interaction redesign.
+ * These are exact selectors/formulas, not prose: the showcase and the
+ * implementation must be able to grep DESIGN.md for each one.
+ */
+const INTERACTION_MARKERS = [
+  'clamp(240px, 22vw, 300px)',
+  '64px',
+  '#btn-toggle-game-menu',
+  '#btn-show-game-menu',
+  'night-of-witnesses.game-menu-collapsed.v1',
+  'relativeIndex = (canonicalIndex - viewerIndex + count) % count',
+  '50 + Math.cos(radians) * 45',
+  '50 + Math.sin(radians) * 38',
+  '(x=50, y=50)',
+  '.table-action-dock',
+  '[data-target-id="guest-room"]',
+  '.card-face',
+  '.card-back',
+  '玩家的隱藏卡牌',
+  '#card-detail-dialog',
+  '#btn-pass-card',
+  '#claim-dialog',
+  '#claim-role-select',
+  '#btn-confirm-pass',
+  '#btn-cancel-pass',
+  'data-state="pending"',
+  'data-state="error"',
+  '.is-revealed',
+  'prefers-reduced-motion',
+  'simultaneously',
+];
+
+export function validateInteractionContract(content: string): InteractionContractResult {
+  const markersFound: string[] = [];
+  const markersMissing: string[] = [];
+  for (const marker of INTERACTION_MARKERS) {
+    if (content.includes(marker)) {
+      markersFound.push(marker);
+    } else {
+      markersMissing.push(marker);
+    }
+  }
+  return {
+    markersFound,
+    markersMissing,
+    isValid: markersMissing.length === 0,
+  };
+}
 
 export interface DesignValidationResult {
   hasAllSections: boolean;
@@ -156,5 +216,36 @@ describe('Tavern DESIGN.md contract', () => {
     assert.equal(check.isValid, false);
     assert.ok(check.rejectedCyanTokensFound.includes('#22d3ee'));
     assert.ok(check.missingSections.length > 0);
+  });
+});
+
+describe('Tavern table-centric interaction contract', () => {
+  test('DESIGN.md documents the amended menu geometry, ring formula, and interaction states', () => {
+    const content = readFileSync(DESIGN_MD_PATH, 'utf-8');
+    const result = validateInteractionContract(content);
+
+    mkdirSync(join(ROOT_DIR, '.omo/evidence'), { recursive: true });
+    writeFileSync(INTERACTION_EVIDENCE_PATH, JSON.stringify(result, null, 2), 'utf-8');
+
+    assert.deepEqual(
+      result.markersMissing,
+      [],
+      `Missing interaction contract markers: ${result.markersMissing.join(', ')}`
+    );
+    assert.ok(result.isValid, 'Interaction contract must be complete');
+  });
+
+  test('validateInteractionContract rejects an obsolete wide-split contract fixture', () => {
+    const staleContract = `
+# Old layout
+- Two-column grid: grid-template-columns: minmax(0, 1.5fr) minmax(360px, 0.9fr);
+- Draft form uses #recipient-select and a standalone transfer box.
+`;
+    const check = validateInteractionContract(staleContract);
+    assert.equal(check.isValid, false);
+    assert.ok(check.markersMissing.includes('#claim-dialog'));
+    assert.ok(check.markersMissing.includes('[data-target-id="guest-room"]'));
+    assert.ok(check.markersMissing.includes('.table-action-dock'));
+    assert.ok(check.markersMissing.includes('relativeIndex = (canonicalIndex - viewerIndex + count) % count'));
   });
 });

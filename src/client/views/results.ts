@@ -2,6 +2,7 @@ import { el } from '../ui/dom.ts';
 import type { GameClient } from '../net.ts';
 import type { PlayerProjection } from '../../shared/state.ts';
 import { FACTIONS, PLAYER_LOCATIONS, ROLES } from '../../shared/rules.ts';
+import { renderResultsTable } from './results-table.ts';
 
 export function renderResults(
   container: HTMLElement,
@@ -26,7 +27,8 @@ export function renderResults(
   const isHost = projection.isHost;
   const factionDef = FACTIONS[result.winningFaction];
 
-  const panel = el('div', { class: 'panel', id: 'results-panel' }, [
+  // Left column: every information block the results page already carried.
+  const summary = el('div', { class: 'panel results-summary' }, [
     // Winner Banner
     el(
       'header',
@@ -164,11 +166,23 @@ export function renderResults(
     ]),
   ]);
 
+  // Right column: the canonical reveal table, exposed after the summary to AT.
+  const tablePanel = el('div', { class: 'panel table-panel results-table-panel' }, [
+    el('h2', { id: 'results-table-heading' }, ['圓桌身分揭示']),
+    renderResultsTable(projection, result),
+  ]);
+
+  const panel = el('div', { id: 'results-panel' }, [
+    el('div', { class: 'results-layout' }, [summary, tablePanel]),
+  ]);
+
   if (isHost) {
-    const rematchBtn = panel.querySelector('#btn-rematch') as HTMLButtonElement;
-    rematchBtn?.addEventListener('click', () => {
-      client.dispatchAction({ type: 'rematch' });
-    });
+    const rematchBtn = summary.querySelector('#btn-rematch');
+    if (rematchBtn instanceof HTMLButtonElement) {
+      rematchBtn.addEventListener('click', () => {
+        client.dispatchAction({ type: 'rematch' });
+      });
+    }
   }
 
   container.appendChild(panel);

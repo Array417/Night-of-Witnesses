@@ -46,6 +46,23 @@ npm run start
 
 服務啟動後，瀏覽器前往 [http://127.0.0.1:3000](http://127.0.0.1:3000) 即可開始遊戲。
 
+### 單人測試：加入 3 個測試玩家
+
+先用瀏覽器建立房間並記下 6 碼房間代碼，再在另一個 PowerShell 視窗執行：
+
+```powershell
+npm run add-bots -- ABC123
+```
+
+預設會加入 `Bot 1`、`Bot 2`、`Bot 3`。也可以指定名稱：
+
+```powershell
+npm run add-bots -- ABC123 Alice Bob Charlie
+```
+
+Bot 會自動準備、輪流選牌傳牌，以及在投票階段投票；請保持這個視窗運行。
+你仍需要用瀏覽器中的房主玩家按「開始遊戲」和「進入投票」。按 `Ctrl+C` 會讓測試玩家離線。
+
 ---
 
 ## 容器化部署 (Docker)

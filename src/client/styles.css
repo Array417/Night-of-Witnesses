@@ -138,13 +138,15 @@ body::before {
   font-family: var(--font-sans);
   font-weight: 700;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  transform: translateY(-200%);
-  transition: transform 0.2s ease;
+  /* `translate` (not `transform`): the global reduced-motion override forces
+     transform:none !important, which parked this link over the drawer opener. */
+  translate: 0 -200%;
+  transition: translate 0.2s ease;
   text-decoration: none;
 }
 
 .skip-link:focus {
-  transform: translateY(0);
+  translate: 0 0;
 }
 
 /* Screen reader utility */
@@ -211,9 +213,97 @@ main {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(360px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s6);
   align-items: start;
+}
+
+/* Game Menu: narrow desktop sidebar (DESIGN.md §5.11). */
+#game-menu {
+  position: relative;
+  min-width: 0;
+}
+
+#game-menu[data-state="collapsed"] {
+  width: 64px;
+}
+
+#game-menu[data-state="collapsed"] .game-menu-label {
+  display: none;
+}
+
+/* Collapsed content stays in the accessibility tree: never display:none / aria-hidden. */
+#game-menu[data-state="collapsed"] .game-menu-content {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.game-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  padding: var(--s2);
+  border: 1px solid #7c4d33;
+  border-radius: var(--r-sm);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.035), transparent 42%),
+    var(--leather);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+@media (hover: hover) {
+  .game-menu-item:hover {
+    border-color: var(--accent-hover);
+  }
+}
+
+.game-menu-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--brass);
+  border-radius: var(--r-sm);
+  background: rgba(26, 14, 9, 0.82);
+  color: #ffe6ad;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.game-menu-label {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+/* The persistent opener exists only in drawer mode. */
+#btn-show-game-menu {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .layout {
+    grid-template-columns: clamp(240px, 22vw, 300px) minmax(0, 1fr);
+  }
+  .layout:has(#game-menu[data-state="collapsed"]) {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
 }
 
 /* Panels */
@@ -249,6 +339,18 @@ main {
   background:
     radial-gradient(circle at 50% 36%, rgba(213, 154, 65, 0.08), transparent 28rem),
     linear-gradient(180deg, #26160f 0%, #160d09 100%);
+}
+
+/* The heading row wraps instead of squeezing. 證人圓桌 is a four-glyph compound:
+   at 200% text it can no longer share one row with the count label, and letting
+   flex shrink the h2 orphaned its last glyph (`證人圓` / `桌`). The title never
+   breaks; the count label moves to its own row, readable, never clipped. */
+.table-heading {
+  flex-wrap: wrap;
+}
+
+.table-heading h2 {
+  white-space: nowrap;
 }
 
 /* Form Controls */
@@ -548,10 +650,18 @@ select:hover {
   justify-content: center;
 }
 
-.table-oval {
+/* Ring container: canonical seats hang around the wooden oval. */
+.table-ring {
   position: relative;
-  width: min(80%, 376px);
+  width: min(100%, 560px);
   aspect-ratio: 1.1 / 1;
+  margin: var(--s4) auto;
+}
+
+.table-oval {
+  position: absolute;
+  inset: 0;
+  width: auto;
   border: 12px solid #3b2013;
   border-radius: 50%;
   background-color: var(--wood);
@@ -568,7 +678,7 @@ select:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: var(--s4) auto;
+  margin: 0;
 }
 
 .table-oval::before {
@@ -592,20 +702,32 @@ select:hover {
   letter-spacing: 0.08em;
   font-size: 0.9rem;
   box-shadow: inset 0 0 0 1px #4d301a, 0 3px 8px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.15s ease;
 }
 
-/* Seats Grid */
+/* The Guest Room target owns the table centre; the oval plaque sits behind it. */
+.table-ring:has(.guest-room-target) .table-oval::after {
+  opacity: 0;
+}
+
+/* Canonical ring seats positioned from --seat-x / --seat-y (getTableSeats). */
 .seats {
-  display: grid;
-  gap: var(--s4);
-  width: 100%;
+  position: absolute;
+  inset: 6%;
 }
 
 .seat {
-  position: relative;
-  min-height: 44px;
-  min-width: 44px;
-  padding: var(--s3);
+  position: absolute;
+  left: calc(var(--seat-x) * 1%);
+  top: calc(var(--seat-y) * 1%);
+  translate: -50% -50%;
+  /* Seats scale with text size (3em) so zoomed CJK labels stop wrapping one glyph
+     per line and stretching the box into the opposite seat. The 34% cap keeps
+     adjacent ring seats apart (the tightest angular gap is 45% of the layer) and
+     the 23% term keeps normal-size rendering unchanged. */
+  width: max(44px, 23%, min(3em, 34%));
+  min-height: var(--touch-min);
+  padding: var(--s1);
   border: 1px solid #7c4d33;
   border-radius: var(--r-md);
   background:
@@ -617,9 +739,9 @@ select:hover {
     inset 0 1px 0 rgba(255, 220, 184, 0.08);
   display: flex;
   flex-direction: column;
-  gap: var(--s1);
-  text-align: left;
-  cursor: pointer;
+  align-items: center;
+  gap: 1px;
+  text-align: center;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -635,18 +757,73 @@ select:hover {
 .seat-name {
   color: #fff0d2;
   font-family: var(--font-serif);
-  font-size: 15px;
+  font-size: 0.875rem;
   font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  /* The ring is a spatial map: clamp the visual name so a 24-char name can
+     never collide with a neighbour. The full name stays in the aria-label. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 
 .seat-location {
   color: #d3bd9a;
-  font-size: 13px;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .seat-state {
   color: #c3aa86;
-  font-size: 13px;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* One generic back per opponent, hung flush under the seat's lower edge. The
+   back's top sits on the seat's bottom border, 4px below the state line's box,
+   so it can never paint over name/location/state. It must NOT be tucked up
+   into the seat: at 360px the six-player stacked seats have only ~11px of
+   vertical slack, and any tuck deep enough to reach the text (~10px+) pushes
+   the back under the centre Guest Room target. */
+.seat-card {
+  position: absolute;
+  bottom: -42px;
+  left: 50%;
+  translate: -50% 0;
+  width: 30px;
+  height: 42px;
+}
+
+.seat-card .card-back {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.seat-card .card-back::after {
+  inset: 6px 5px;
+}
+
+/* Transparent overlay: only eligible seats become interactive targets. */
+.seat-target {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 /* Seat States */
@@ -681,6 +858,12 @@ select:hover {
   color: #f0cd83;
 }
 
+/* The parchment viewer seat keeps dark ink even while acting or offline. */
+.seat[aria-current="true"].is-active .seat-state,
+.seat[aria-current="true"].is-offline .seat-state {
+  color: #5a402a;
+}
+
 .seat.is-offline {
   border-style: dashed;
   filter: saturate(0.35);
@@ -712,10 +895,139 @@ select:hover {
   font-weight: 600;
 }
 
+/* Claim badges never grow a seat past one text line; the full claim stays in
+   the seat's accessible name and the public testimony trail. The badge spends
+   the seat's own 4px padding gutter (negative margin) so the zh-Hant role
+   still fits a 360px seat; it can never exceed the seat's border box. */
+.seat .claim-badge {
+  max-width: calc(100% + 2 * var(--s1));
+  margin-inline: calc(var(--s1) * -1);
+  padding: 2px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Below the tablet layout the seat is ~60px wide and cannot hold the 聲稱：
+   prefix plus the role. The prefix is decorative context — the seat's
+   accessible name carries 聲稱：<角色> — so it drops and the role stays legible. */
+@media (max-width: 767px) {
+  .seat .claim-badge .claim-badge-prefix {
+    display: none;
+  }
+}
+
 @media (hover: hover) {
-  .seat:hover {
+  .seat:has(.seat-target):hover {
     border-color: #c4944f;
   }
+}
+
+/* Final-actor Guest Room target pinned to the table centre. */
+.guest-room-target {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 96px;
+  min-height: var(--touch-min);
+  padding: var(--s2) var(--s3);
+  border: 2px solid var(--brass);
+  border-radius: var(--r-sm);
+  background: rgba(26, 14, 9, 0.88);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.42), inset 0 0 0 2px #120907;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.guest-room-target.is-targeted,
+.guest-room-target.is-drop-ready {
+  border-color: var(--accent-hover);
+  box-shadow: 0 0 0 4px rgba(240, 200, 110, 0.2), 0 6px 14px rgba(0, 0, 0, 0.42);
+}
+
+.guest-room-name {
+  font-family: var(--font-serif);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #ffe6ad;
+}
+
+.guest-room-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Persistent strip below the oval for phase controls and status. */
+.table-action-dock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  margin-top: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid #7f5a30;
+  border-radius: var(--r-md);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent 36%),
+    #21130e;
+  box-shadow: inset 0 0 0 2px #120a07;
+}
+
+.dock-status {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* Phase controls relocated from the left panel (discussion/voting). */
+.dock-phase-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  width: 100%;
+  min-width: 0;
+}
+
+.dock-phase-actions h2 {
+  font-size: 1.2rem;
+  margin-bottom: 0;
+}
+
+/* The 12-glyph draft heading orphans its final glyph (抽牌與傳 / 遞) at 375 and
+   on the desktop rail; balance breaks it as 輪到您的回合：/ 抽牌與傳遞. */
+#draft-controls h2 {
+  text-wrap: balance;
+}
+
+.dock-phase-actions fieldset,
+.dock-phase-actions .form-group {
+  margin-bottom: 0;
+}
+
+/* Viewer's face-up hand slot below the table. */
+.hand-slot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: stretch;
+  gap: var(--s3);
+  width: 100%;
+  margin-top: var(--s2);
+}
+
+.hand-slot .card-face {
+  flex: 1 1 132px;
+  min-width: 96px;
+  max-width: 168px;
+  min-height: 128px;
 }
 
 /* Cards */
@@ -790,6 +1102,35 @@ select:hover {
   }
   .card-face.is-selected:hover {
     transform: translateY(-6px) rotate(-1deg);
+  }
+}
+
+/* Separate per-card detail control: desktop may also click/Enter the card itself. */
+.card-detail-trigger {
+  width: 100%;
+  min-height: 44px;
+  margin-top: var(--s2);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--brass);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, rgba(199, 154, 70, 0.24), rgba(199, 154, 70, 0.08));
+  color: #33200f;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.card-detail-trigger:focus-visible {
+  outline: 3px double var(--accent-hover);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .card-detail-trigger:hover {
+    border-color: var(--accent-hover);
+    background: linear-gradient(180deg, rgba(225, 187, 105, 0.34), rgba(199, 154, 70, 0.14));
   }
 }
 
@@ -871,6 +1212,11 @@ dialog::backdrop {
   text-shadow: none;
 }
 
+/* The button display rule must not reveal a pass action the card cannot use. */
+.card-detail #btn-pass-card[hidden] {
+  display: none;
+}
+
 /* Empty & Loading States */
 .state-loading,
 .state-empty {
@@ -915,7 +1261,7 @@ dialog::backdrop {
 
 /* Results & Recovery Surfaces */
 #results-panel {
-  max-width: 860px;
+  max-width: var(--container-max-width);
   margin: 0 auto;
 }
 
@@ -923,6 +1269,13 @@ dialog::backdrop {
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 2px solid var(--accent);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), inset 0 0 16px rgba(199, 154, 70, 0.15);
+}
+
+/* Balance the two-line CJK banner copy so 獲勝 is never split and no single
+   glyph (勝！) is orphaned on the last line at 360/375. */
+#winner-heading,
+.winner-reason {
+  text-wrap: balance;
 }
 
 .winner-banner[data-faction="witness_faction"] {
@@ -979,6 +1332,125 @@ dialog::backdrop {
   background: rgba(199, 154, 70, 0.05);
 }
 
+/* Results reveal: summary left, canonical table right (DESIGN.md §5.16). */
+.results-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s6);
+  align-items: start;
+}
+
+@media (min-width: 1024px) {
+  .results-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 560px);
+  }
+}
+
+.results-stage {
+  min-height: 0;
+  padding-block: 40px 32px;
+}
+
+@media (max-width: 767px) {
+  .results-stage {
+    padding-top: 72px;
+    /* The viewer's result card hangs below the ring and the audio shell is
+       fixed at the viewport bottom-right; at max scroll the shell covered the
+       card's faction row (measured -26.7px clearance at 360). 96px leaves the
+       card ≥8px above the shell at 360/375 with normal and reduced motion. */
+    padding-bottom: calc(var(--s6) * 4);
+  }
+}
+
+/* Result cards hang directly above or below their own seat — never toward the
+   table centre — so the Guest Room card keeps the centre at every player count
+   and no card leaves the ring horizontally. */
+.results-reveal .result-card {
+  width: 64px;
+  height: 88px;
+  transform-style: preserve-3d;
+  transition: transform 0.5s ease;
+}
+
+.results-seat {
+  perspective: 700px;
+}
+
+.results-seat .result-card {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+}
+
+.results-seat[data-card-side="above"] .result-card {
+  bottom: calc(100% + 2px);
+}
+
+.results-seat[data-card-side="below"] .result-card {
+  top: calc(100% + 2px);
+}
+
+.results-reveal .result-card .card-back,
+.results-reveal .result-card .card-face {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 5px;
+  backface-visibility: hidden;
+}
+
+.results-reveal .result-card .card-back::after {
+  inset: 6px 5px;
+  backface-visibility: hidden;
+}
+
+.results-reveal .result-card .card-face {
+  cursor: default;
+}
+
+.results-reveal .result-card .card-face[data-hand="result"] {
+  transform: rotateY(180deg);
+}
+
+.results-reveal .result-card .card-kicker {
+  font-size: 9px;
+}
+
+.results-reveal .result-card .card-role {
+  font-size: 13px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.results-reveal .result-card .card-action {
+  font-size: 9px;
+}
+
+/* One table-level class rotates every card in the same style recalculation. */
+.results-reveal.is-revealed .result-card {
+  transform: rotateY(180deg);
+}
+
+/* Guest Room centre card sits in flow inside the centre target. */
+.results-guest-room {
+  cursor: default;
+  gap: var(--s1);
+  perspective: 700px;
+}
+
+.results-guest-room .result-card {
+  position: relative;
+  left: auto;
+  top: auto;
+  translate: none;
+  width: 72px;
+  height: 99px;
+}
+
 /* Responsive Breakpoints */
 @media (max-width: 1023px) {
   .layout {
@@ -987,8 +1459,10 @@ dialog::backdrop {
   .table-stage {
     min-height: 580px;
   }
-  .table-oval {
-    width: min(64%, 430px);
+  /* Narrower rings get one less name line so adjacent seats never collide. */
+  .seat-name {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 }
 
@@ -1003,16 +1477,11 @@ dialog::backdrop {
   .table-stage {
     min-height: 0;
   }
-  .table-oval {
+  .table-ring {
     width: min(100%, 380px);
+  }
+  .table-oval {
     border-width: 9px;
-  }
-  .seats {
-    gap: var(--s3);
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .seat[data-seat="1"] {
-    grid-column: 1 / -1;
   }
   dialog {
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.52), inset 0 0 0 3px #120907;
@@ -1020,12 +1489,59 @@ dialog::backdrop {
   }
 }
 
-@media (max-width: 374px) {
-  .seats {
-    grid-template-columns: 1fr;
+/* Mobile / coarse-pointer drawer: closed by default, opened by the persistent button.
+   Capability (`pointer: coarse`) counts even at wide viewports; the media query list
+   is an OR so one block serves both triggers. */
+@media (max-width: 767px), (pointer: coarse) {
+  .layout,
+  /* Same specificity as the desktop collapse rule, so it also wins after a resize. */
+  .layout:has(#game-menu[data-state="collapsed"]) {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .seat[data-seat="1"] {
-    grid-column: auto;
+  #btn-toggle-game-menu {
+    display: none;
+  }
+  #btn-show-game-menu {
+    display: flex;
+    position: fixed;
+    top: var(--s3);
+    left: var(--s3);
+    /* Floats above the open panel so it can always toggle the drawer. */
+    z-index: 930;
+    width: auto;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+  }
+  /* Space reservation, same formula as the drawer content padding: the table
+     heading (panel top-left) must clear the floating opener and its 8px shadow
+     so 「證人圓桌」 is never occluded while the drawer is closed. */
+  .table-panel {
+    padding-top: calc(var(--s3) + var(--touch-min) + var(--s3));
+  }
+  #game-menu-content {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 920;
+    width: min(320px, 86vw);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    /* Clear the floating opener: s3 + touch-min + s3. */
+    padding: calc(var(--s3) + var(--touch-min) + var(--s3)) var(--s4) var(--s4);
+    border-inline-end: 1px solid var(--border);
+    background:
+      linear-gradient(120deg, rgba(255, 255, 255, 0.03), transparent 35%),
+      #1b100b;
+    box-shadow: 14px 0 34px rgba(0, 0, 0, 0.5);
+    /* `translate` (not `transform`): the reduced-motion override forces transform:none. */
+    translate: -100% 0;
+    transition: translate 0.15s ease;
+  }
+  #game-menu[data-state="open"] #game-menu-content {
+    translate: 0 0;
+  }
+  /* Body-scroll safety: locks only while open and clears itself when the view unmounts. */
+  body:has(#game-menu[data-state="open"]) {
+    overflow: hidden;
   }
 }
 
@@ -1037,5 +1553,25 @@ dialog::backdrop {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transform: none !important;
+  }
+}
+
+/* Results reveal under reduced motion: the global override forces `transform: none`,
+   so the same table-level class becomes an instant opacity/visibility face swap
+   with no flip animation and the same assignment data. */
+@media (prefers-reduced-motion: reduce) {
+  .results-reveal .result-card .card-face {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .results-reveal.is-revealed .result-card .card-face {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .results-reveal.is-revealed .result-card .card-back {
+    opacity: 0;
+    visibility: hidden;
   }
 }

@@ -1,5 +1,11 @@
 /**
- * Active game shell with shared responsive table and phase-specific action panels.
+ * Active game shell with a narrow collapsible menu and the shared responsive table.
+ *
+ * Interaction mode follows input capability (`pointer: coarse`); media queries only
+ * decide the page-frame layout. The desktop collapse boolean persists for the browser
+ * session under `night-of-witnesses.game-menu-collapsed.v1`, so a projection rerender,
+ * reconnect, or reload never reopens the menu. On coarse-pointer/narrow viewports the
+ * same menu becomes a closed-by-default drawer with a persistent opener.
  */
 import { el } from '../ui/dom.ts';
 import type { GameClient } from '../net.ts';
@@ -9,14 +15,22 @@ import {
   ROLES,
 } from '../../shared/rules.ts';
 import { renderGameTable } from './game-table.ts';
-import { renderDraftAction } from './game-draft.ts';
+import { createDraftCoordinator, renderDraftWaiting } from './game-draft.ts';
 import { renderDiscussionAction, renderVotingAction } from './game-phases.ts';
+
+const GAME_MENU_STATE_KEY = 'night-of-witnesses.game-menu-collapsed.v1';
+/** Kept in sync with the `max-width: 767px` drawer media query in styles.css. */
+const MOBILE_MENU_MAX_WIDTH = 767;
 
 export function renderGame(
   container: HTMLElement,
   projection: PlayerProjection,
   client: GameClient
 ): void {
+  // A projection rerender must not slam the drawer shut while the viewer is using it;
+  // the previous view's state is the only memory, so it resets when the view unmounts.
+  const wasDrawerOpen =
+    container.querySelector<HTMLElement>('#game-menu')?.dataset.state === 'open';
   container.innerHTML = '';
 
   const me = projection.players.find((p) => p.playerId === projection.viewerId);
@@ -28,11 +42,46 @@ export function renderGame(
     voting: '投票指認階段',
   };
 
+  // Input capability decides interaction mode; media queries decide the page frame.
+  const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+  const drawerMode =
+    coarsePointer || window.matchMedia(`(max-width: ${MOBILE_MENU_MAX_WIDTH}px)`).matches;
+
   // Outer responsive layout container
   const layout = el('div', { class: 'layout' });
 
-  // Left Column: Menu & Actions
-  const leftCol = el('div', { class: 'menu stack' });
+  // Menu: narrow collapsible sidebar on desktop, closed-by-default drawer on mobile.
+  const menu = el('nav', { id: 'game-menu', 'aria-label': '遊戲選單' });
+
+  const showMenuLabel = el('span', { class: 'game-menu-label' }, ['選單']);
+  const showMenuButton = el(
+    'button',
+    {
+      type: 'button',
+      id: 'btn-show-game-menu',
+      class: 'game-menu-item game-menu-show',
+      'aria-expanded': 'false',
+      'aria-controls': 'game-menu-content',
+      'aria-label': '顯示遊戲選單',
+    },
+    [el('span', { class: 'game-menu-badge', 'aria-hidden': 'true' }, ['選']), showMenuLabel]
+  );
+
+  const toggleMenuLabel = el('span', { class: 'game-menu-label' }, ['收合選單']);
+  const toggleMenuButton = el(
+    'button',
+    {
+      type: 'button',
+      id: 'btn-toggle-game-menu',
+      class: 'game-menu-item game-menu-toggle',
+      'aria-expanded': 'true',
+      'aria-controls': 'game-menu-content',
+      'aria-label': '收合遊戲選單',
+    },
+    [el('span', { class: 'game-menu-badge', 'aria-hidden': 'true' }, ['選']), toggleMenuLabel]
+  );
+
+  const menuContent = el('div', { id: 'game-menu-content', class: 'game-menu-content stack' });
 
   // 1. Header panel
   const header = el('header', { class: 'panel', id: 'game-header' }, [
@@ -53,7 +102,7 @@ export function renderGame(
       `您的身處地點：【${myLocation}】`,
     ]),
   ]);
-  leftCol.appendChild(header);
+  menuContent.appendChild(header);
 
   // 2. Private Role Drawer
   const rolePanel = el('div', { class: 'panel', id: 'private-role-panel' });
@@ -105,44 +154,60 @@ export function renderGame(
 
   rolePanel.appendChild(revealBtn);
   rolePanel.appendChild(roleContent);
-  leftCol.appendChild(rolePanel);
+  menuContent.appendChild(rolePanel);
 
-  // 3. Phase Action Panel
+  // 3. Phase Action Panel — draft transfer controls only. Discussion and voting
+  // controls render into the table's `.table-action-dock` via the table options.
   const actionPanel = el('div', { class: 'panel', id: 'phase-action-panel' });
-  let selectedRecipientId: string | undefined = undefined;
 
-  // Right Column: Shared Witness Table (instantiate first so draft action can reference it)
+  // One transfer coordinator owns card/target/claim state for the draft actor; the
+  // table forwards drops and target activations into its single confirmation path.
+  const draft =
+    projection.phase === 'draft' &&
+    projection.currentActorId === projection.viewerId &&
+    (projection.ownCards?.length ?? 0) === 2
+      ? createDraftCoordinator({
+          root: container,
+          panel: actionPanel,
+          projection,
+          client,
+          tapSelect: coarsePointer,
+        })
+      : null;
+
+  // Table surface (right column): the dominant active-game area.
   const tablePanel = renderGameTable({
     projection,
-    selectedRecipientId,
-    onSelectRecipient: (pid: string) => {
-      const select = actionPanel.querySelector('#recipient-select') as HTMLSelectElement | null;
-      if (select) {
-        select.value = pid;
-        select.dispatchEvent(new Event('change'));
+    onSelectRecipient: draft?.onSelectRecipient,
+    onDropCard: draft?.onDropCard,
+    onSelectGuestRoom: draft?.onSelectGuestRoom,
+    renderPhaseActions: (host) => {
+      if (projection.phase === 'discussion') {
+        renderDiscussionAction(host, projection, client);
+      } else if (projection.phase === 'voting') {
+        renderVotingAction(host, projection, client);
       }
     },
   });
 
-  const onTargetChanged = (pid: string) => {
-    selectedRecipientId = pid;
-    tablePanel.querySelectorAll('.seat').forEach((s) => {
-      if (s.getAttribute('data-player-id') === pid) {
-        s.classList.add('is-targeted');
-      } else {
-        s.classList.remove('is-targeted');
-      }
+  // Coarse-pointer tap selection: tapping an own card selects/replaces it. The
+  // `[data-action="view-card"]` trigger stays the only tap path to card details.
+  if (draft !== null && coarsePointer) {
+    tablePanel.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('[data-action="view-card"]')) return;
+      const card = target.closest<HTMLElement>('.card-face[data-hand="viewer"][data-card-id]');
+      const cardId = card?.dataset.cardId;
+      if (cardId !== undefined && cardId !== '') draft.onSelectCard(cardId);
     });
-  };
-
-  if (projection.phase === 'draft') {
-    renderDraftAction(actionPanel, projection, client, onTargetChanged);
-  } else if (projection.phase === 'discussion') {
-    renderDiscussionAction(actionPanel, projection, client);
-  } else if (projection.phase === 'voting') {
-    renderVotingAction(actionPanel, projection, client);
   }
-  leftCol.appendChild(actionPanel);
+
+  // Draft waiting/status stays in the menu panel; other phases render in the dock.
+  if (projection.phase === 'draft') {
+    if (draft === null) renderDraftWaiting(actionPanel, projection);
+    menuContent.appendChild(actionPanel);
+  }
 
   // 4. Public Testimony Trail Panel
   const testimonyPanel = el('div', { class: 'panel', id: 'testimony-panel' }, [
@@ -172,9 +237,62 @@ export function renderGame(
           })
         ),
   ]);
-  leftCol.appendChild(testimonyPanel);
+  menuContent.appendChild(testimonyPanel);
 
-  layout.appendChild(leftCol);
+  // Collapsed boolean persists for the browser session: a rerender, reconnect, or reload
+  // must not reopen the menu. The drawer state stays transient and closed by default.
+  function setMenuCollapsed(collapsed: boolean): void {
+    menu.dataset.state = collapsed ? 'collapsed' : 'expanded';
+    toggleMenuButton.setAttribute('aria-expanded', String(!collapsed));
+    toggleMenuLabel.textContent = collapsed ? '展開選單' : '收合選單';
+    toggleMenuButton.setAttribute('aria-label', collapsed ? '展開遊戲選單' : '收合遊戲選單');
+    try {
+      window.sessionStorage.setItem(GAME_MENU_STATE_KEY, String(collapsed));
+    } catch {
+      // Storage unavailable: the menu still works, it just does not persist.
+    }
+  }
+
+  function setDrawerOpen(open: boolean): void {
+    menu.dataset.state = open ? 'open' : 'closed';
+    showMenuButton.setAttribute('aria-expanded', String(open));
+    showMenuLabel.textContent = open ? '收合選單' : '選單';
+    showMenuButton.setAttribute('aria-label', open ? '收合遊戲選單' : '顯示遊戲選單');
+  }
+
+  function readStoredCollapsed(): boolean {
+    try {
+      return window.sessionStorage.getItem(GAME_MENU_STATE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  if (drawerMode) {
+    setDrawerOpen(wasDrawerOpen);
+  } else {
+    setMenuCollapsed(readStoredCollapsed());
+  }
+
+  toggleMenuButton.addEventListener('click', () => {
+    setMenuCollapsed(menu.dataset.state === 'expanded');
+  });
+  showMenuButton.addEventListener('click', () => {
+    setDrawerOpen(menu.dataset.state !== 'open');
+  });
+  // Escape is scoped to the menu element, so the listener dies with the view; focus
+  // always starts on the persistent opener, which is inside the menu.
+  menu.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || menu.dataset.state !== 'open') return;
+    setDrawerOpen(false);
+    showMenuButton.focus();
+  });
+
+  menu.appendChild(showMenuButton);
+  menu.appendChild(toggleMenuButton);
+  menu.appendChild(menuContent);
+
+  layout.appendChild(menu);
   layout.appendChild(tablePanel);
   container.appendChild(layout);
 }

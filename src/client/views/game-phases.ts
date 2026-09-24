@@ -1,7 +1,7 @@
 /**
  * Discussion and voting phase action components with audio triggers and privacy safety.
  */
-import { el } from '../ui/dom.ts';
+import { el, showInlineAlert } from '../ui/dom.ts';
 import type { GameClient } from '../net.ts';
 import type { PlayerProjection } from '../../shared/state.ts';
 import {
@@ -9,6 +9,9 @@ import {
   type PlayerLocationId,
 } from '../../shared/rules.ts';
 import { audioManager } from '../audio/manager.ts';
+
+/** Shown when a phase action cannot be dispatched (offline or one already in flight). */
+const DISPATCH_FAILED = '操作失敗：連線中斷或已有動作正在處理，請稍後再試。';
 
 export function renderDiscussionAction(
   container: HTMLElement,
@@ -52,7 +55,9 @@ export function renderDiscussionAction(
       ]);
       peekBtn.addEventListener('click', () => {
         audioManager.playCue('ability');
-        client.dispatchAction({ type: 'butler_peek' });
+        if (!client.dispatchAction({ type: 'butler_peek' })) {
+          showInlineAlert(container, DISPATCH_FAILED);
+        }
       });
       butlerBox.appendChild(peekBtn);
     }
@@ -99,10 +104,14 @@ export function renderDiscussionAction(
       const targetSelect = detectiveBox.querySelector('#detective-target-select') as HTMLSelectElement;
       if (targetSelect?.value) {
         audioManager.playCue('ability');
-        client.dispatchAction({
-          type: 'detective_send',
-          targetLocation: targetSelect.value as PlayerLocationId,
-        });
+        if (
+          !client.dispatchAction({
+            type: 'detective_send',
+            targetLocation: targetSelect.value as PlayerLocationId,
+          })
+        ) {
+          showInlineAlert(container, DISPATCH_FAILED);
+        }
       }
     });
 
@@ -123,7 +132,9 @@ export function renderDiscussionAction(
     );
     hostAdvanceBtn.addEventListener('click', () => {
       audioManager.playCue('phase_change');
-      client.dispatchAction({ type: 'advance_to_vote' });
+      if (!client.dispatchAction({ type: 'advance_to_vote' })) {
+        showInlineAlert(container, DISPATCH_FAILED);
+      }
     });
     container.appendChild(hostAdvanceBtn);
   } else {
@@ -214,10 +225,14 @@ export function renderVotingAction(
     const checked = form.querySelector('input[name="targetLocation"]:checked') as HTMLInputElement;
     if (checked?.value) {
       audioManager.playCue('vote');
-      client.dispatchAction({
-        type: 'cast_vote',
-        targetLocation: checked.value as PlayerLocationId,
-      });
+      if (
+        !client.dispatchAction({
+          type: 'cast_vote',
+          targetLocation: checked.value as PlayerLocationId,
+        })
+      ) {
+        showInlineAlert(container, DISPATCH_FAILED);
+      }
     }
   });
 

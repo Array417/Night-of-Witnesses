@@ -131,6 +131,9 @@ function initApp(): void {
     onError: (code: string, message: string) => {
       updateConnectionBadge('error');
       audioManager.playCue('error');
+      // A rejected or stale action drops all pending UI: rerender from the current
+      // safe projection (the draft coordinator returns to idle), then alert.
+      renderCurrentView(app, client);
       showInlineAlert(app, message);
     },
     onStatusChange: (status) => {

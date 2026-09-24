@@ -1,219 +1,303 @@
 /**
- * Draft phase action controls with interactive cards and drag & drop support.
+ * Draft-phase transfer coordinator.
+ *
+ * One closure owns exactly `passedCardId`, `targetId`, and
+ * `dialogState: idle | confirming | pending`. The transition table is:
+ * - `idle → confirming` after a valid card + target (drag, dialog fallback, keyboard);
+ * - `confirming → idle` on cancel/Escape (clears card, target, highlights, pending controls,
+ *   and returns focus to the initiating card);
+ * - `confirming → pending` on an accepted local dispatch (confirm disabled, `aria-busy`);
+ * - `pending → idle` on the next projection or a server error (the view rerenders, or the
+ *   error handler resets this closure);
+ * - a synchronous `dispatchAction() === false` resets straight to `idle` with a focused alert.
+ *
+ * Every path converges on `beginConfirmation(cardId, targetId)` and never submits twice.
+ * Escape and `#btn-cancel-pass` are the only dismissal paths and both reset explicitly; the
+ * dialog's `close` event is deliberately not observed because it is queued and can arrive
+ * after a newer confirmation has already started (a real race this module must not have).
  */
 import { el, showInlineAlert } from '../ui/dom.ts';
 import type { GameClient } from '../net.ts';
 import type { PlayerProjection } from '../../shared/state.ts';
-import { PLAYER_LOCATIONS, ROLES, type RoleId } from '../../shared/rules.ts';
+import { ROLES, type RoleId } from '../../shared/rules.ts';
 import { audioManager } from '../audio/manager.ts';
+import { renderCardDetailDialog, wireCardDetail } from './game-cards.ts';
+import { renderClaimDialog } from './game-claim-dialog.ts';
 
-export function renderDraftAction(
-  container: HTMLElement,
-  projection: PlayerProjection,
-  client: GameClient,
-  onTargetChanged?: (playerId: string) => void
-): void {
-  const isMyTurn = projection.currentActorId === projection.viewerId;
-  const currentActorName =
-    projection.players.find((p) => p.playerId === projection.currentActorId)?.playerName || '未知';
+const GUEST_ROOM_TARGET_ID = 'guest-room';
 
-  if (!isMyTurn) {
-    container.appendChild(
-      el('div', { class: 'alert alert-warning' }, [
-        `等待 【${currentActorName}】 選擇並傳遞卡片中...`,
-      ])
+const IDLE_STATUS = '請點擊卡片查看詳情，或拖曳卡片至目標玩家席位。';
+
+type DialogState = 'idle' | 'confirming' | 'pending';
+
+export interface DraftCoordinator {
+  /** Eligible-seat activation; stores a target chosen before the card, else confirms. */
+  readonly onSelectRecipient: (playerId: string) => void;
+  /** Validated own-card drop from the table. */
+  readonly onDropCard: (playerId: string, cardId: string) => void;
+  /** Final-actor Guest Room activation. */
+  readonly onSelectGuestRoom: () => void;
+  /** Coarse-pointer own-card tap: selects the card, or replaces the current selection. */
+  readonly onSelectCard: (cardId: string) => void;
+}
+
+/** Non-actor or cards-not-yet-dealt panel content. */
+export function renderDraftWaiting(panel: HTMLElement, projection: PlayerProjection): void {
+  if (projection.currentActorId === projection.viewerId) {
+    panel.appendChild(
+      el('div', { id: 'draft-waiting', class: 'alert alert-warning' }, ['正在等待手牌發送...'])
     );
     return;
   }
+  const currentActorName =
+    projection.players.find((p) => p.playerId === projection.currentActorId)?.playerName || '未知';
+  panel.appendChild(
+    el('div', { id: 'draft-waiting', class: 'alert alert-warning' }, [
+      `等待 【${currentActorName}】 選擇並傳遞卡片中...`,
+    ])
+  );
+}
 
-  container.appendChild(el('h2', {}, ['輪到您的回合：抽牌與傳遞']));
-  container.appendChild(
-    el('p', { class: 'label-hint', style: 'margin-bottom: 16px;' }, [
-      '請從以下兩張卡片中，秘密保留一張，並將另一張傳遞給未曾拿過牌的玩家。',
+export interface DraftCoordinatorOptions {
+  /** Game container that hosts the dialogs and delegated card-detail wiring. */
+  readonly root: HTMLElement;
+  /** Phase action panel that shows status and dispatch failures. */
+  readonly panel: HTMLElement;
+  readonly projection: PlayerProjection;
+  readonly client: GameClient;
+  /**
+   * Coarse-pointer mode: card taps select/replace instead of opening the detail dialog.
+   * The detail trigger stays the only tap path to card details.
+   */
+  readonly tapSelect: boolean;
+}
+
+export function createDraftCoordinator(options: DraftCoordinatorOptions): DraftCoordinator {
+  const { root, panel, projection, client, tapSelect } = options;
+  const ownCards = projection.ownCards ?? [];
+  const isFinalPlayer = projection.servedPlayerIds.length === projection.players.length;
+  const eligibleTargetIds = new Set(
+    projection.players
+      .filter(
+        (player) =>
+          player.playerId !== projection.viewerId &&
+          player.connected &&
+          !projection.servedPlayerIds.includes(player.playerId)
+      )
+      .map((player) => player.playerId)
+  );
+
+  let passedCardId: string | null = null;
+  let targetId: string | null = null;
+  let dialogState: DialogState = 'idle';
+
+  const status = el(
+    'p',
+    { id: 'transfer-status', class: 'transfer-status', role: 'status', 'aria-live': 'polite' },
+    [IDLE_STATUS]
+  );
+  const {
+    dialog: claimDialog,
+    summary: claimSummary,
+    select: claimSelect,
+    confirmButton,
+    cancelButton,
+  } = renderClaimDialog(projection.publicRoleRoster);
+  const detailDialog = renderCardDetailDialog();
+  root.appendChild(detailDialog);
+  root.appendChild(claimDialog);
+
+  function findOwnCard(cardId: string | null): HTMLElement | null {
+    if (cardId === null) return null;
+    for (const card of root.querySelectorAll<HTMLElement>(
+      '.card-face[data-hand="viewer"][data-card-id]'
+    )) {
+      if (card.dataset.cardId === cardId) return card;
+    }
+    return null;
+  }
+
+  function otherOwnCardId(cardId: string): string | null {
+    return ownCards.find((card) => card.id !== cardId)?.id ?? null;
+  }
+
+  function targetName(id: string): string {
+    if (id === GUEST_ROOM_TARGET_ID) return '【客房】';
+    const player = projection.players.find((p) => p.playerId === id);
+    return `【${player?.playerName ?? '未知'}】`;
+  }
+
+  function isValidTarget(id: string): boolean {
+    return isFinalPlayer ? id === GUEST_ROOM_TARGET_ID : eligibleTargetIds.has(id);
+  }
+
+  function syncHighlights(): void {
+    for (const seat of root.querySelectorAll<HTMLElement>('.table-panel .seat[data-player-id]')) {
+      seat.classList.toggle('is-targeted', targetId !== null && seat.dataset.playerId === targetId);
+    }
+    const guestRoom = root.querySelector<HTMLElement>('.table-panel [data-target-id="guest-room"]');
+    guestRoom?.classList.toggle('is-targeted', targetId === GUEST_ROOM_TARGET_ID);
+    for (const card of root.querySelectorAll<HTMLElement>(
+      '.table-panel .hand-slot .card-face[data-hand="viewer"][data-card-id]'
+    )) {
+      card.classList.toggle(
+        'is-selected',
+        passedCardId !== null && card.dataset.cardId === passedCardId
+      );
+    }
+  }
+
+  function setStatus(message: string): void {
+    status.textContent = message;
+  }
+
+  function clearPendingControls(): void {
+    claimDialog.dataset.state = 'idle';
+    confirmButton.dataset.state = 'idle';
+    confirmButton.disabled = false;
+    confirmButton.removeAttribute('aria-busy');
+    confirmButton.textContent = '確認傳遞';
+    claimSelect.value = '';
+  }
+
+  function resetToIdle(statusMessage: string): void {
+    passedCardId = null;
+    targetId = null;
+    dialogState = 'idle';
+    clearPendingControls();
+    syncHighlights();
+    setStatus(statusMessage);
+  }
+
+  function focusInitiatingCard(cardId: string | null): void {
+    findOwnCard(cardId)?.focus();
+  }
+
+  function focusFirstTarget(): void {
+    const target =
+      root.querySelector<HTMLButtonElement>('.table-panel .seats button.seat-target') ??
+      root.querySelector<HTMLButtonElement>('.table-panel [data-target-id="guest-room"]');
+    target?.focus();
+  }
+
+  function cancelConfirmation(): void {
+    if (dialogState === 'idle') return;
+    const cardId = passedCardId;
+    if (claimDialog.open) claimDialog.close();
+    resetToIdle(IDLE_STATUS);
+    focusInitiatingCard(cardId);
+  }
+
+  function beginConfirmation(cardId: string, nextTargetId: string): void {
+    if (dialogState !== 'idle') return;
+    const card = ownCards.find((candidate) => candidate.id === cardId);
+    if (!card || !isValidTarget(nextTargetId)) return;
+    passedCardId = cardId;
+    targetId = nextTargetId;
+    dialogState = 'confirming';
+    syncHighlights();
+    setStatus(`請選擇公開宣稱，然後按「確認傳遞」將${card.label}傳給${targetName(nextTargetId)}。`);
+    claimSummary.textContent = `將「${card.label}」傳遞給${targetName(nextTargetId)}。`;
+    claimDialog.dataset.state = 'confirming';
+    if (!claimDialog.open) claimDialog.showModal();
+    claimSelect.focus();
+  }
+
+  /** `#btn-pass-card` hand-off: arm the card, then wait for (or reuse) a target. */
+  function chooseCard(cardId: string): void {
+    if (dialogState !== 'idle') return;
+    if (!ownCards.some((candidate) => candidate.id === cardId)) return;
+    passedCardId = cardId;
+    audioManager.playCue('card_select');
+    syncHighlights();
+    if (targetId !== null && isValidTarget(targetId)) {
+      beginConfirmation(cardId, targetId);
+      return;
+    }
+    setStatus(
+      isFinalPlayer
+        ? '已選擇要傳遞的卡片，請點擊桌面中央的【客房】。'
+        : '已選擇要傳遞的卡片，請選擇目標玩家。'
+    );
+    focusFirstTarget();
+  }
+
+  function selectTarget(playerId: string): void {
+    if (dialogState !== 'idle' || !isValidTarget(playerId)) return;
+    if (passedCardId !== null) {
+      beginConfirmation(passedCardId, playerId);
+      return;
+    }
+    targetId = playerId;
+    syncHighlights();
+    setStatus(`已選擇${targetName(playerId)}，請點擊卡片後按「傳遞此卡」。`);
+  }
+
+  function selectGuestRoom(): void {
+    if (dialogState !== 'idle' || !isFinalPlayer) return;
+    if (passedCardId !== null) {
+      beginConfirmation(passedCardId, GUEST_ROOM_TARGET_ID);
+      return;
+    }
+    targetId = GUEST_ROOM_TARGET_ID;
+    syncHighlights();
+    setStatus('已選擇【客房】，請點擊卡片後按「傳遞此卡」。');
+  }
+
+  function confirm(): void {
+    if (dialogState !== 'confirming') return;
+    if (passedCardId === null || targetId === null) return;
+    const keepCardId = otherOwnCardId(passedCardId);
+    if (keepCardId === null) return;
+    const testimonyValue = claimSelect.value;
+    const testimonyRole =
+      testimonyValue !== '' && Object.hasOwn(ROLES, testimonyValue)
+        ? (testimonyValue as RoleId)
+        : undefined;
+
+    dialogState = 'pending';
+    claimDialog.dataset.state = 'pending';
+    confirmButton.dataset.state = 'pending';
+    confirmButton.disabled = true;
+    confirmButton.setAttribute('aria-busy', 'true');
+    confirmButton.textContent = '傳遞中…';
+    setStatus('傳遞中，請稍候…');
+    audioManager.playCue('card_pass');
+
+    const accepted = client.dispatchAction({
+      type: 'choose_and_pass',
+      keepCardId,
+      passToPlayerId: isFinalPlayer ? undefined : targetId,
+      testimonyRole,
+    });
+
+    if (!accepted) {
+      if (claimDialog.open) claimDialog.close();
+      resetToIdle(IDLE_STATUS);
+      showInlineAlert(panel, '傳遞失敗：連線中斷或已有動作正在處理，請重新選擇後再試。');
+    }
+  }
+
+  cancelButton.addEventListener('click', cancelConfirmation);
+  confirmButton.addEventListener('click', confirm);
+  claimDialog.addEventListener('cancel', cancelConfirmation);
+
+  panel.appendChild(
+    el('div', { id: 'draft-controls' }, [
+      el('h2', {}, ['輪到您的回合：抽牌與傳遞']),
+      el('p', { class: 'label-hint', style: 'margin-bottom: 16px;' }, [
+        '點擊卡片查看詳情後按「傳遞此卡」，或直接拖曳卡片至目標玩家席位；確認公開宣稱後才會送出。',
+      ]),
+      status,
     ])
   );
 
-  const ownCards = projection.ownCards || [];
-  if (ownCards.length !== 2) {
-    container.appendChild(el('p', {}, ['正在等待手牌發送...']));
-    return;
-  }
+  wireCardDetail(root, { onPassCard: chooseCard, activateCards: !tapSelect });
 
-  const isFinalPlayer = projection.servedPlayerIds.length === projection.players.length;
-  let selectedKeepIndex = 0;
-
-  // Cards Row
-  const cardsRow = el('div', { class: 'cards-row' });
-  const cardElements: HTMLElement[] = [];
-
-  ownCards.forEach((card, idx) => {
-    const isSelected = idx === selectedKeepIndex;
-    const cardEl = el(
-      'div',
-      {
-        class: `card-face ${isSelected ? 'is-selected' : ''}`,
-        tabindex: '0',
-        draggable: 'true',
-        'data-card-id': card.id,
-        'aria-label': `卡片 ${idx + 1}：${card.label}。${isSelected ? '已選取保留' : '點擊選取保留'}`,
-        style: 'min-height: 120px; min-width: 110px;',
-      },
-      [
-        el('span', { class: 'card-kicker' }, [isSelected ? '已選取保留' : `卡片 ${idx + 1}`]),
-        el('span', { class: 'card-role' }, [card.label]),
-        el('span', { class: 'card-action' }, ['點擊保留 / 拖曳傳遞']),
-      ]
-    );
-
-    const selectThisCard = () => {
-      selectedKeepIndex = idx;
-      audioManager.playCue('card_select');
-      cardElements.forEach((c, i) => {
-        if (i === idx) {
-          c.classList.add('is-selected');
-          c.querySelector('.card-kicker')!.textContent = '已選取保留';
-        } else {
-          c.classList.remove('is-selected');
-          c.querySelector('.card-kicker')!.textContent = `卡片 ${i + 1}`;
-        }
-      });
-      const radio = container.querySelector(`#keep-card-${idx}`) as HTMLInputElement | null;
-      if (radio) radio.checked = true;
-    };
-
-    cardEl.addEventListener('click', selectThisCard);
-    cardEl.addEventListener('keydown', (e: Event) => {
-      const ke = e as KeyboardEvent;
-      if (ke.key === 'Enter' || ke.key === ' ') {
-        ke.preventDefault();
-        selectThisCard();
-      }
-    });
-
-    // Drag start
-    cardEl.addEventListener('dragstart', (e: Event) => {
-      const de = e as DragEvent;
-      if (de.dataTransfer) {
-        de.dataTransfer.setData('text/plain', card.id);
-        de.dataTransfer.effectAllowed = 'move';
-      }
-    });
-
-    cardElements.push(cardEl);
-    cardsRow.appendChild(cardEl);
-  });
-
-  container.appendChild(cardsRow);
-
-  // Draft Form
-  const form = el('form', { id: 'draft-form' });
-
-  // Fieldset keeping stable IDs #keep-card-0 and #keep-card-1
-  const fieldset = el('fieldset', { class: 'sr-only' }, [
-    el('legend', {}, ['保留卡片選項']),
-    ...ownCards.map((card, idx) =>
-      el('input', {
-        type: 'radio',
-        id: `keep-card-${idx}`,
-        name: 'keepCardId',
-        value: card.id,
-        checked: idx === selectedKeepIndex,
-      })
-    ),
-  ]);
-  form.appendChild(fieldset);
-
-  if (!isFinalPlayer) {
-    const unservedPlayers = projection.players.filter(
-      (p) => !projection.servedPlayerIds.includes(p.playerId) && p.playerId !== projection.viewerId
-    );
-
-    const recipientGroup = el('div', { class: 'form-group' }, [
-      el('label', { for: 'recipient-select' }, ['選擇傳遞對象']),
-      el(
-        'select',
-        { id: 'recipient-select', required: true },
-        unservedPlayers.map((p) =>
-          el('option', { value: p.playerId }, [
-            `${p.playerName}（${p.locationId ? PLAYER_LOCATIONS[p.locationId]?.label : ''}）`,
-          ])
-        )
-      ),
-    ]);
-
-    const selectEl = recipientGroup.querySelector('#recipient-select') as HTMLSelectElement;
-    if (selectEl && onTargetChanged) {
-      selectEl.addEventListener('change', () => {
-        onTargetChanged(selectEl.value);
-      });
-      // Initial target notify
-      if (unservedPlayers.length > 0) {
-        onTargetChanged(unservedPlayers[0].playerId);
-      }
-    }
-
-    const testimonyGroup = el('div', { class: 'form-group' }, [
-      el('label', { for: 'testimony-select' }, ['公開聲稱傳遞的角色（可誠實亦可說謊）']),
-      el('select', { id: 'testimony-select' }, [
-        el('option', { value: '' }, ['（不特別聲明）']),
-        ...projection.publicRoleRoster.map((r) =>
-          el('option', { value: r }, [ROLES[r]?.label || r])
-        ),
-      ]),
-    ]);
-
-    const transferBox = el('div', { class: 'transfer-box' }, [
-      el('span', { class: 'transfer-status' }, ['點擊選取卡片保留，或拖曳卡片至目標玩家席位']),
-    ]);
-
-    form.appendChild(recipientGroup);
-    form.appendChild(testimonyGroup);
-    form.appendChild(transferBox);
-  } else {
-    form.appendChild(
-      el('div', { class: 'alert alert-warning' }, [
-        '您是最後一位選牌玩家，剩餘的一張卡片將秘密扣置於【客房】中。',
-      ])
-    );
-  }
-
-  const submitBtn = el(
-    'button',
-    { id: 'btn-confirm-pass', type: 'submit', class: 'primary-button btn-block' },
-    ['確認保留並傳遞']
-  );
-  form.appendChild(submitBtn);
-
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const checkedRadio = form.querySelector('input[name="keepCardId"]:checked') as HTMLInputElement;
-    if (!checkedRadio) return;
-
-    const keepCardId = checkedRadio.value;
-    let passToPlayerId: string | undefined = undefined;
-    let testimonyRole: RoleId | undefined = undefined;
-
-    if (!isFinalPlayer) {
-      const recipientSelect = form.querySelector('#recipient-select') as HTMLSelectElement;
-      passToPlayerId = recipientSelect?.value;
-      if (!passToPlayerId) {
-        showInlineAlert(container, '請選擇傳遞對象。');
-        return;
-      }
-      const testimonySelect = form.querySelector('#testimony-select') as HTMLSelectElement;
-      if (testimonySelect?.value) {
-        testimonyRole = testimonySelect.value as RoleId;
-      }
-    }
-
-    audioManager.playCue('card_pass');
-    client.dispatchAction({
-      type: 'choose_and_pass',
-      keepCardId,
-      passToPlayerId,
-      testimonyRole,
-    });
-  });
-
-  container.appendChild(form);
+  return {
+    onSelectRecipient: selectTarget,
+    onDropCard: (playerId, cardId) => beginConfirmation(cardId, playerId),
+    onSelectGuestRoom: selectGuestRoom,
+    onSelectCard: chooseCard,
+  };
 }

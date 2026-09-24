@@ -1,113 +1,209 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { completeDraft, startRoom } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
   fs.mkdirSync(evidenceDir, { recursive: true });
 }
 
+/** Client-side `cast_vote` frames the page actually sent, recorded while proxying the socket. */
+interface VoteCapture {
+  readonly castVotes: Record<string, unknown>[];
+}
+
+async function recordVotes(page: Page, capture: VoteCapture): Promise<void> {
+  await page.routeWebSocket('/ws', (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const text = typeof message === 'string' ? message : message.toString('utf8');
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        if (parsed.type === 'cast_vote') capture.castVotes.push(parsed);
+      } catch {
+        // Non-JSON frames are proxied untouched.
+      }
+      server.send(message);
+    });
+  });
+}
+
 test.describe('Discussion and Voting Phases with Sound Mapping and Privacy', () => {
   test('discussion advances to voting and voting completes with progress indicator', async ({ browser }) => {
-    const p1Ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    const p2Ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    const p3Ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const { pages, contexts } = await startRoom(browser, ['主持愛麗絲', '玩家二號', '玩家三號']);
+    const [p1, p2, p3] = pages;
 
-    const p1 = await p1Ctx.newPage();
-    const p2 = await p2Ctx.newPage();
-    const p3 = await p3Ctx.newPage();
+    try {
+      // Complete draft through the transfer coordinator (dialog fallback, then Guest Room).
+      await completeDraft(pages);
 
-    // 1. Create and join 3-player game
-    await p1.goto('/');
-    await p1.fill('#player-name-input', '主持愛麗絲');
-    await p1.click('#btn-create-room');
-    const code = (await p1.locator('#lobby-panel h1').innerText()).match(/[A-Z0-9]{6}/)![0];
+      // 2. Discussion Phase; its controls live in the table action dock on every viewport.
+      await expect(p1.locator('#game-header')).toBeVisible();
+      await expect(p1.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+      await expect(p2.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+      await expect(p3.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+      await expect(p1.locator('#phase-action-panel')).toHaveCount(0);
+      const discussionDockCount = await p1.locator('.table-action-dock').count();
 
-    await p2.goto(`/?room=${code}`);
-    await p2.fill('#player-name-input', '玩家二號');
-    await p2.click('#btn-join-room');
+      // Host has the advance button inside the dock, guests have waiting text
+      await expect(p1.locator('.table-action-dock #btn-advance-vote')).toBeVisible();
+      await expect(p2.locator('.table-action-dock #btn-advance-vote')).toHaveCount(0);
+      await expect(p2.locator('.table-action-dock')).toContainText('等待房主結束討論');
 
-    await p3.goto(`/?room=${code}`);
-    await p3.fill('#player-name-input', '玩家三號');
-    await p3.click('#btn-join-room');
+      // Ability controls are dock-scoped whenever the viewer holds that role.
+      for (const page of pages) {
+        const role = await page.evaluate(
+          () => window.__NOW__?.client.getProjection()?.ownRole?.role ?? null
+        );
+        if (role === 'butler') {
+          await expect(page.locator('.table-action-dock #btn-butler-peek')).toBeVisible();
+        }
+        if (role === 'detective') {
+          await expect(page.locator('.table-action-dock #btn-detective-send')).toBeVisible();
+        }
+      }
 
-    await p1.click('#btn-toggle-ready');
-    await p2.click('#btn-toggle-ready');
-    await p3.click('#btn-toggle-ready');
-    const startBtn = p1.locator('#btn-start-game');
-    await expect(startBtn).toBeEnabled();
-    await startBtn.click();
+      // Capture discussion evidence at the table surface.
+      const discShotPath = path.join(evidenceDir, 'opendesign-task-6-phases-discussion.png');
+      await p1.screenshot({ path: discShotPath, fullPage: true });
 
-    // Complete draft
-    await expect(p1.locator('#draft-form')).toBeVisible();
-    await p1.locator('.cards-row .card-face').first().click();
-    await p1.locator('#recipient-select').selectOption({ index: 0 });
-    await p1.click('#btn-confirm-pass');
+      // 3. Host advances to Voting Phase from the dock
+      await p1.locator('.table-action-dock #btn-advance-vote').click();
 
-    await expect(p2.locator('#draft-form')).toBeVisible();
-    await p2.locator('.cards-row .card-face').first().click();
-    await p2.locator('#recipient-select').selectOption({ index: 0 });
-    await p2.click('#btn-confirm-pass');
+      await expect(p1.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+      await expect(p2.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+      await expect(p3.locator('.table-action-dock h2')).toHaveText('投票指認階段');
 
-    await expect(p3.locator('#draft-form')).toBeVisible();
-    await p3.locator('.cards-row .card-face').first().click();
-    await p3.click('#btn-confirm-pass');
+      // Verify vote form and vote progress inside the dock
+      await expect(p1.locator('.table-action-dock #vote-form')).toBeVisible();
+      await expect(p1.locator('.table-action-dock .vote-progress')).toBeVisible();
+      await expect(p2.locator('.table-action-dock #vote-form')).toBeVisible();
+      await expect(p3.locator('.table-action-dock #vote-form')).toBeVisible();
+      await expect(p1.locator('#phase-action-panel')).toHaveCount(0);
 
-    // 2. Discussion Phase
-    await expect(p1.locator('#game-header')).toBeVisible();
-    await expect(p1.locator('h2:has-text("自由討論階段")')).toBeVisible();
-    await expect(p2.locator('h2:has-text("自由討論階段")')).toBeVisible();
-    await expect(p3.locator('h2:has-text("自由討論階段")')).toBeVisible();
+      // Capture the full-cycle dock surface at the table.
+      const cycleShotPath = path.join(
+        evidenceDir,
+        'task-8-game-table-interaction-redesign-full-cycle.png'
+      );
+      await p1.screenshot({ path: cycleShotPath, fullPage: true });
 
-    // Host has advance button, guests have waiting text
-    await expect(p1.locator('#btn-advance-vote')).toBeVisible();
-    await expect(p2.locator('#btn-advance-vote')).toHaveCount(0);
+      // Capture voting evidence at the table surface.
+      const voteShotPath = path.join(evidenceDir, 'opendesign-task-6-phases-voting.png');
+      await p1.screenshot({ path: voteShotPath, fullPage: true });
 
-    // Capture discussion evidence
-    const discShotPath = path.join(evidenceDir, 'opendesign-task-6-phases-discussion.png');
-    await p1.screenshot({ path: discShotPath, fullPage: true });
+      // Cast votes; the dock survives the projection rerender after each ballot.
+      await p1.locator('.table-action-dock #btn-submit-vote').click();
+      // Once voted, shows submitted confirmation
+      await expect(p1.locator('.table-action-dock .alert-success')).toContainText('您已完成投票');
 
-    // 3. Host advances to Voting Phase
-    await p1.click('#btn-advance-vote');
+      // Verify other players cannot see P1's target in DOM
+      const p2Html = await p2.content();
+      expect(p2Html).not.toContain('指認目標為');
 
-    await expect(p1.locator('h2:has-text("投票指認階段")')).toBeVisible();
-    await expect(p2.locator('h2:has-text("投票指認階段")')).toBeVisible();
-    await expect(p3.locator('h2:has-text("投票指認階段")')).toBeVisible();
+      await p2.locator('.table-action-dock #btn-submit-vote').click();
+      await p3.locator('.table-action-dock #btn-submit-vote').click();
 
-    // Verify vote form and vote progress
-    const voteFormP1 = p1.locator('#vote-form');
-    await expect(voteFormP1).toBeVisible();
-    const voteProgressP1 = p1.locator('.vote-progress');
-    await expect(voteProgressP1).toBeVisible();
+      // After all vote, game transitions to results
+      await expect(p1.locator('#results-panel')).toBeVisible();
+      await p1.screenshot({
+        path: path.join(evidenceDir, 'task-8-game-table-interaction-redesign-full-cycle-results.png'),
+        fullPage: true,
+      });
 
-    // Capture voting evidence
-    const voteShotPath = path.join(evidenceDir, 'opendesign-task-6-phases-voting.png');
-    await p1.screenshot({ path: voteShotPath, fullPage: true });
+      const jsonPath = path.join(evidenceDir, 'opendesign-task-6-phases.json');
+      fs.writeFileSync(jsonPath, JSON.stringify({
+        phasesCompleted: ['discussion', 'voting'],
+        privacyPreserved: true,
+        audioTriggersVerified: true,
+        dockHosted: true,
+      }, null, 2));
+      fs.writeFileSync(
+        path.join(evidenceDir, 'task-8-game-table-interaction-redesign-phases.json'),
+        JSON.stringify(
+          {
+            discussionDockCount,
+            hostAdvanceInDock: true,
+            guestAdvanceAbsent: true,
+            votingFormInDock: true,
+            leftPhasePanelAbsent: true,
+            resultsReached: true,
+          },
+          null,
+          2
+        )
+      );
+    } finally {
+      await Promise.all(contexts.map((context) => context.close()));
+    }
+  });
 
-    // Cast votes
-    await p1.click('#btn-submit-vote');
-    // Once voted, shows submitted confirmation
-    await expect(p1.locator('.alert-success')).toContainText('您已完成投票');
+  test('duplicate vote submit dispatches once and a disconnected submit recovers from the dock', async ({ browser }) => {
+    const capture: VoteCapture = { castVotes: [] };
+    const { pages, contexts } = await startRoom(
+      browser,
+      ['愛麗絲', '鮑伯', '查理'],
+      {
+        viewport: { width: 1280, height: 800 },
+        onPage: async (page, index) => {
+          if (index === 1) await recordVotes(page, capture);
+        },
+      }
+    );
+    const [p1, p2, p3] = pages;
 
-    // Verify other players cannot see P1's target in DOM
-    const p2Html = await p2.content();
-    expect(p2Html).not.toContain('指認目標為');
+    try {
+      await completeDraft(pages);
+      await expect(p1.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+      await p1.locator('.table-action-dock #btn-advance-vote').click();
+      for (const page of pages) {
+        await expect(page.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+      }
 
-    await p2.click('#btn-submit-vote');
-    await p3.click('#btn-submit-vote');
+      // Duplicate submit: two synchronous submit events in one task produce exactly one frame.
+      await p2.evaluate(() => {
+        const form = document.querySelector('#vote-form');
+        if (!form) throw new Error('vote form missing');
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+      await expect.poll(() => capture.castVotes.length).toBe(1);
+      const duplicateFrames = capture.castVotes.length;
+      await expect(p2.locator('.table-action-dock .alert-success')).toContainText('您已完成投票');
 
-    // After all vote, game transitions to results
-    await expect(p1.locator('#results-panel')).toBeVisible();
+      // Disconnected submit: the socket is closed, so dispatchAction() returns false.
+      await p3.evaluate(() => {
+        (window as unknown as { __NOW__?: { client: { disconnect(): void } } }).__NOW__?.client.disconnect();
+      });
+      await p3.locator('.table-action-dock #btn-submit-vote').click();
+      const dockAlert = p3.locator('.table-action-dock [role="alert"]');
+      await expect(dockAlert).toBeVisible();
+      await expect(dockAlert).toBeFocused();
+      await expect(dockAlert).toContainText('連線中斷');
+      const alertText = (await dockAlert.textContent()) ?? '';
 
-    const jsonPath = path.join(evidenceDir, 'opendesign-task-6-phases.json');
-    fs.writeFileSync(jsonPath, JSON.stringify({
-      phasesCompleted: ['discussion', 'voting'],
-      privacyPreserved: true,
-      audioTriggersVerified: true,
-    }, null, 2));
+      // Reconnect replays the safe projection: the dock rerenders and the retry succeeds.
+      await p3.evaluate(() => {
+        (window as unknown as { __NOW__?: { client: { connect(): void } } }).__NOW__?.client.connect();
+      });
+      await expect(p3.locator('.table-action-dock [role="alert"]')).toHaveCount(0);
+      await p3.locator('.table-action-dock #btn-submit-vote').click();
+      await expect(p3.locator('.table-action-dock .alert-success')).toContainText('您已完成投票');
 
-    await p1Ctx.close();
-    await p2Ctx.close();
-    await p3Ctx.close();
+      await p1.locator('.table-action-dock #btn-submit-vote').click();
+      await expect(p1.locator('#results-panel')).toBeVisible();
+
+      const jsonPath = path.join(evidenceDir, 'task-8-game-table-interaction-redesign-recovery.json');
+      fs.writeFileSync(jsonPath, JSON.stringify({
+        duplicateVoteFrames: duplicateFrames,
+        disconnectedAlertFocused: true,
+        disconnectedAlertText: alertText,
+        retrySucceeded: true,
+        resultsReached: true,
+      }, null, 2));
+    } finally {
+      await Promise.all(contexts.map((context) => context.close()));
+    }
   });
 });

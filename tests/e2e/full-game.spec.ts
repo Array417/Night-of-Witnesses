@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
@@ -58,48 +59,52 @@ test.describe('authoritative end-to-end game journeys', () => {
     await expect(startBtn).toBeEnabled();
     await startBtn.click();
 
-    // All enter draft
+    // All enter draft; the table surface is visible on every viewport.
     await expect(pAlice.locator('#game-header')).toBeVisible();
-    await expect(pBob.locator('#game-header')).toBeVisible();
-    await expect(pCharlie.locator('#game-header')).toBeVisible();
+    await expect(pBob.locator('.table-panel')).toBeVisible();
+    await expect(pCharlie.locator('.table-panel')).toBeVisible();
 
     // CANARY & PRIVACY CHECK:
-    // Bob and Charlie must NOT see draft form while Alice is active
-    await expect(pAlice.locator('#draft-form')).toBeVisible();
-    await expect(pBob.locator('#draft-form')).toBeHidden();
-    await expect(pCharlie.locator('#draft-form')).toBeHidden();
+    // Bob and Charlie must NOT see draft controls while Alice is active
+    await openGameMenu(pAlice);
+    await expect(pAlice.locator('#draft-controls')).toBeVisible();
+    await expect(pBob.locator('#draft-controls')).toBeHidden();
+    await expect(pCharlie.locator('#draft-controls')).toBeHidden();
+    await closeGameMenu(pAlice);
 
-    // Alice keeps role and passes to Bob
-    await pAlice.locator('#recipient-select').selectOption({ index: 0 });
-    await pAlice.locator('#btn-confirm-pass').click();
+    // Alice keeps role and passes to Bob, Bob to Charlie, Charlie to the Guest Room.
+    await passToFirstEligible(pAlice);
 
     // Bob is now active actor
-    await expect(pBob.locator('#draft-form')).toBeVisible();
-    await expect(pAlice.locator('#draft-form')).toBeHidden();
-    await pBob.locator('#recipient-select').selectOption({ index: 0 });
-    await pBob.locator('#btn-confirm-pass').click();
+    await openGameMenu(pBob);
+    await expect(pBob.locator('#draft-controls')).toBeVisible();
+    await expect(pAlice.locator('#draft-controls')).toBeHidden();
+    await closeGameMenu(pBob);
+    await passToFirstEligible(pBob);
 
     // Charlie is final actor
-    await expect(pCharlie.locator('#draft-form')).toBeVisible();
-    await pCharlie.locator('#btn-confirm-pass').click();
+    await openGameMenu(pCharlie);
+    await expect(pCharlie.locator('#draft-controls')).toBeVisible();
+    await closeGameMenu(pCharlie);
+    await passToGuestRoom(pCharlie);
 
-    // All enter discussion phase
-    await expect(pAlice.locator('h2:has-text("自由討論階段")')).toBeVisible();
-    await expect(pBob.locator('h2:has-text("自由討論階段")')).toBeVisible();
-    await expect(pCharlie.locator('h2:has-text("自由討論階段")')).toBeVisible();
+    // All enter discussion phase; controls live in the table action dock on every viewport.
+    await expect(pAlice.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+    await expect(pBob.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+    await expect(pCharlie.locator('.table-action-dock h2')).toHaveText('自由討論階段');
 
-    // Host advances discussion to voting
-    await pAlice.locator('#btn-advance-vote').click();
+    // Host advances discussion to voting from the dock
+    await pAlice.locator('.table-action-dock #btn-advance-vote').click();
 
-    // All enter voting phase
-    await expect(pAlice.locator('h2:has-text("投票指認階段")')).toBeVisible();
-    await expect(pBob.locator('h2:has-text("投票指認階段")')).toBeVisible();
-    await expect(pCharlie.locator('h2:has-text("投票指認階段")')).toBeVisible();
+    // All enter voting phase; the dock survives the projection rerender.
+    await expect(pAlice.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+    await expect(pBob.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+    await expect(pCharlie.locator('.table-action-dock h2')).toHaveText('投票指認階段');
 
-    // All cast vote
-    await pAlice.locator('#btn-submit-vote').click();
-    await pBob.locator('#btn-submit-vote').click();
-    await pCharlie.locator('#btn-submit-vote').click();
+    // All cast vote from the dock form
+    await pAlice.locator('.table-action-dock #btn-submit-vote').click();
+    await pBob.locator('.table-action-dock #btn-submit-vote').click();
+    await pCharlie.locator('.table-action-dock #btn-submit-vote').click();
 
     // Results screen appears for all
     await expect(pAlice.locator('#results-panel')).toBeVisible();
@@ -113,11 +118,24 @@ test.describe('authoritative end-to-end game journeys', () => {
     expect(aliceWinnerText).toBe(bobWinnerText);
     expect(bobWinnerText).toBe(charlieWinnerText);
 
+    // Canonical reveal table: one seat and card per player plus the Guest Room card,
+    // all flipped together by one table-level `.is-revealed` class.
+    const revealTable = pAlice.locator('.results-reveal');
+    await expect(revealTable).toHaveClass(/is-revealed/);
+    await expect(revealTable.locator('.seat')).toHaveCount(3);
+    await expect(revealTable.locator('.result-card[data-player-id]')).toHaveCount(3);
+    await expect(revealTable.locator('.results-guest-room .result-card')).toHaveCount(1);
+
     // Rematch back to lobby
     await pAlice.locator('#btn-rematch').click();
     await expect(pAlice.locator('#lobby-panel')).toBeVisible();
     await expect(pBob.locator('#lobby-panel')).toBeVisible();
     await expect(pCharlie.locator('#lobby-panel')).toBeVisible();
+
+    // No stale revealed table survives the rematch rerender on any client.
+    for (const page of [pAlice, pBob, pCharlie]) {
+      await expect(page.locator('.results-reveal')).toHaveCount(0);
+    }
 
     await ctxAlice.close();
     await ctxBob.close();
@@ -173,20 +191,22 @@ test.describe('authoritative end-to-end game journeys', () => {
     await expect(startBtn).toBeEnabled();
     await startBtn.click();
 
-    // Draft phase
+    // Draft phase; the table surface is the visible signal on drawer viewports.
     await expect(p1.locator('#game-header')).toBeVisible();
-    await expect(p2.locator('#game-header')).toBeVisible();
-    await expect(p3.locator('#game-header')).toBeVisible();
-    await expect(p4.locator('#game-header')).toBeVisible();
+    await expect(p2.locator('.table-panel')).toBeVisible();
+    await expect(p3.locator('.table-panel')).toBeVisible();
+    await expect(p4.locator('.table-panel')).toBeVisible();
 
     const pages = [p1, p2, p3, p4];
 
-    // Helper to pass draft for active page
+    // Helper to pass draft for the active page; the last actor uses the Guest Room.
+    // The viewer's own seat carries both `aria-current` and `is-active` only on the actor's page,
+    // which stays visible on every viewport even while the menu drawer is closed.
     for (let i = 0; i < 4; i++) {
       let activePage: typeof p1 | null = null;
       await expect.poll(async () => {
         for (const p of pages) {
-          if (await p.locator('#draft-form').isVisible()) {
+          if ((await p.locator('.table-panel .seat[aria-current="true"].is-active').count()) > 0) {
             activePage = p;
             return true;
           }
@@ -196,35 +216,40 @@ test.describe('authoritative end-to-end game journeys', () => {
 
       expect(activePage).not.toBeNull();
       if (i < 3) {
-        await activePage!.locator('#recipient-select').selectOption({ index: 0 });
+        await passToFirstEligible(activePage!);
+      } else {
+        await passToGuestRoom(activePage!);
       }
-      await activePage!.locator('#btn-confirm-pass').click();
-      await expect(activePage!.locator('#draft-form')).toBeHidden();
+      await expect(activePage!.locator('#draft-controls')).toBeHidden();
     }
 
-    // Discussion phase
-    await expect(p1.locator('h2:has-text("自由討論階段")')).toBeVisible();
+    // Discussion phase; ability controls now live in the table action dock.
+    await expect(p1.locator('.table-action-dock h2')).toHaveText('自由討論階段');
 
-    // Check if any player is Butler or Detective
+    // Check if any player is Butler or Detective; their controls render in the dock.
     let resolvedViaDetective = false;
     for (const p of pages) {
-      if (await p.locator('#btn-butler-peek').isVisible()) {
-        await p.locator('#btn-butler-peek').click();
-        await expect(p.locator('.alert-success:has-text("您查看的 2 張扣置卡為")')).toBeVisible();
+      if (await p.locator('.table-action-dock #btn-butler-peek').isVisible()) {
+        await p.locator('.table-action-dock #btn-butler-peek').click();
+        await expect(p.locator('.table-action-dock .alert-success:has-text("您查看的 2 張扣置卡為")')).toBeVisible();
       }
-      if (await p.locator('#btn-detective-send').isVisible()) {
-        await p.locator('#btn-detective-send').click();
+      if (await p.locator('.table-action-dock #btn-detective-send').isVisible()) {
+        await p.locator('.table-action-dock #btn-detective-send').click();
         resolvedViaDetective = true;
         break;
       }
     }
 
     if (!resolvedViaDetective) {
-      await p1.locator('#btn-advance-vote').click();
-      await expect(p1.locator('h2:has-text("投票指認階段")')).toBeVisible();
+      await p1.locator('.table-action-dock #btn-advance-vote').click();
+      // Every client must observe voting before any ballot is cast; a peeking Butler
+      // abstains, so the round can resolve on the third vote and the last page would
+      // otherwise race straight past this heading.
       for (const p of pages) {
-        await expect(p.locator('h2:has-text("投票指認階段")')).toBeVisible();
-        const voteBtn = p.locator('#btn-submit-vote');
+        await expect(p.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+      }
+      for (const p of pages) {
+        const voteBtn = p.locator('.table-action-dock #btn-submit-vote');
         if (await voteBtn.isVisible()) {
           await voteBtn.click();
         }
@@ -236,6 +261,10 @@ test.describe('authoritative end-to-end game journeys', () => {
     await expect(p2.locator('#results-panel')).toBeVisible();
     await expect(p3.locator('#results-panel')).toBeVisible();
     await expect(p4.locator('#results-panel')).toBeVisible();
+
+    // Four player seats plus the Guest Room card all reveal on the canonical table.
+    await expect(p1.locator('.results-reveal .seat')).toHaveCount(4);
+    await expect(p1.locator('.results-reveal .result-card')).toHaveCount(5);
 
     await ctx1.close();
     await ctx2.close();

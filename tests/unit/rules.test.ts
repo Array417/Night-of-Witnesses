@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ROLES,
   FACTIONS,
+  ROLE_DETAILS,
   PLAYER_LOCATIONS,
   SPECIAL_LOCATIONS,
   VALID_LEVELS_BY_PLAYERS,
@@ -10,7 +11,9 @@ import {
   createSetup,
   RulesError,
   type GameLevel,
+  type RoleId,
 } from '../../src/shared/rules.ts';
+import { cardSchema } from '../../src/shared/protocol.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -145,6 +148,87 @@ describe('rules catalog and setup vectors', () => {
       assert.ok(!l8.setAsideCards.some((c) => c.role === 'murderer'), `L8 seed ${seed} set aside murderer`);
       assert.ok(!l8.removedCards.some((c) => c.role === 'murderer'), `L8 seed ${seed} removed murderer`);
       assert.ok(l8.playableCards.some((c) => c.role === 'murderer'), `L8 seed ${seed} missing murderer in deck`);
+    }
+  });
+});
+
+describe('ROLE_DETAILS display metadata (wire-separated)', () => {
+  const allRoles: readonly RoleId[] = [
+    'murderer',
+    'accomplice',
+    'bomber',
+    'lawyer',
+    'rich_merchant',
+    'detective',
+    'butler',
+    'guest',
+  ];
+
+  test('covers all eight roles with original non-empty zh-Hant summaries', () => {
+    // Given: the fixed eight-role catalog
+    // When: reading ROLE_DETAILS keys
+    // Then: exactly the eight roles; each entry is exactly { objective, ability }
+    // (identity comes from the Record key — no id field allowed)
+    assert.deepEqual(new Set(Object.keys(ROLE_DETAILS)), new Set(allRoles));
+    for (const role of allRoles) {
+      const detail = ROLE_DETAILS[role];
+      assert.deepEqual(Object.keys(detail).sort(), ['ability', 'objective'], `${role} entry must be exactly { objective, ability }`);
+      assert.ok(detail.objective.trim().length > 0, `${role} objective must be non-empty`);
+      assert.ok(detail.ability.trim().length > 0, `${role} ability must be non-empty`);
+      assert.ok(detail.objective !== ROLES[role].label, `${role} objective must be a summary, not the label`);
+      assert.ok(detail.ability !== ROLES[role].label, `${role} ability must be a summary, not the label`);
+    }
+  });
+
+  test('summaries stay grounded in implemented resolution behavior', () => {
+    // Given: game.ts resolveRound + discussion actions
+    // When: reading each summary
+    // Then: each summary names its implemented outcome
+    assert.ok(ROLE_DETAILS.murderer.objective.includes('鍋爐室'));
+    assert.ok(
+      ROLE_DETAILS.accomplice.objective.includes('兇手') ||
+        ROLE_DETAILS.accomplice.ability.includes('兇手')
+    );
+    assert.ok(ROLE_DETAILS.bomber.objective.includes('單獨'));
+    assert.ok(ROLE_DETAILS.lawyer.ability.includes('作廢'));
+    assert.ok(ROLE_DETAILS.rich_merchant.ability.includes('2'));
+    assert.ok(
+      ROLE_DETAILS.detective.ability.includes('鍋爐室') &&
+        (ROLE_DETAILS.detective.ability.includes('立即') ||
+          ROLE_DETAILS.detective.ability.includes('直接'))
+    );
+    assert.ok(ROLE_DETAILS.butler.ability.includes('棄權'));
+    assert.ok(
+      ROLE_DETAILS.guest.objective.includes('目擊') ||
+        ROLE_DETAILS.guest.objective.includes('兇手') ||
+        ROLE_DETAILS.guest.objective.includes('鍋爐室')
+    );
+  });
+
+  test('metadata never expands the serialized card wire contract', () => {
+    // Given: the exact on-wire card schema (id, role, label only)
+    // When: parsing a minimal card, an incomplete card, and a card with a
+    //   display-metadata field actually smuggled in
+    // Then: minimal parses; incomplete is rejected; the smuggled field is
+    //   stripped from parsed output (zod default), so the wire stays 3 keys
+    const parsed = cardSchema.safeParse({ id: 'murderer', role: 'murderer', label: '兇手' });
+    assert.ok(parsed.success, `Minimal card must parse: ${JSON.stringify(parsed.error?.issues)}`);
+    assert.deepEqual(Object.keys(cardSchema.shape).sort(), ['id', 'label', 'role']);
+    const incomplete = cardSchema.safeParse({ id: 'x', role: 'guest' });
+    assert.equal(incomplete.success, false);
+    const smuggled = cardSchema.safeParse({
+      id: 'murderer',
+      role: 'murderer',
+      label: '兇手',
+      objective: ROLE_DETAILS.murderer.objective,
+    });
+    assert.ok(smuggled.success, 'Card with smuggled display field must still parse (stripped, not fatal)');
+    if (smuggled.success) {
+      assert.deepEqual(
+        Object.keys(smuggled.data).sort(),
+        ['id', 'label', 'role'],
+        'Smuggled display field must not survive parsing into the wire value'
+      );
     }
   });
 });

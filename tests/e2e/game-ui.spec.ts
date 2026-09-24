@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
@@ -58,56 +59,67 @@ test.describe('complete Traditional Chinese lobby and gameplay interface', () =>
     await expect(startBtn).toBeEnabled();
     await startBtn.click();
 
-    // All players enter draft phase
+    // All players enter draft phase; the table surface is visible on every viewport.
     await expect(pAlice.locator('#game-header')).toBeVisible();
-    await expect(pBob.locator('#game-header')).toBeVisible();
-    await expect(pCharlie.locator('#game-header')).toBeVisible();
+    await expect(pBob.locator('.table-panel')).toBeVisible();
+    await expect(pCharlie.locator('.table-panel')).toBeVisible();
 
     // Role drawer is collapsed initially
     const secretContentAlice = pAlice.locator('#secret-role-content');
     await expect(secretContentAlice).toBeHidden();
 
-    // Alice toggles role reveal
+    // Alice toggles role reveal through the menu (coarse-pointer clients use the drawer)
+    await openGameMenu(pAlice);
     await pAlice.locator('#btn-toggle-role').click();
     await expect(secretContentAlice).toBeVisible();
 
     // Verify Alice (p1) is current actor in draft
-    await expect(pAlice.locator('#draft-form')).toBeVisible();
-    await expect(pBob.locator('#draft-form')).toBeHidden();
+    await expect(pAlice.locator('#draft-controls')).toBeVisible();
+    await expect(pBob.locator('#draft-controls')).toBeHidden();
+    await closeGameMenu(pAlice);
 
-    // Alice passes to next player
-    await pAlice.locator('#recipient-select').selectOption({ index: 0 });
-    await pAlice.locator('#btn-confirm-pass').click();
+    // Alice passes to the next eligible player, then Bob, then Charlie to the Guest Room.
+    await passToFirstEligible(pAlice);
 
     // Now Bob is actor
-    await expect(pBob.locator('#draft-form')).toBeVisible();
-    await pBob.locator('#recipient-select').selectOption({ index: 0 });
-    await pBob.locator('#btn-confirm-pass').click();
+    await openGameMenu(pBob);
+    await expect(pBob.locator('#draft-controls')).toBeVisible();
+    await closeGameMenu(pBob);
+    await passToFirstEligible(pBob);
 
     // Charlie is final actor
-    await expect(pCharlie.locator('#draft-form')).toBeVisible();
-    await pCharlie.locator('#btn-confirm-pass').click();
+    await openGameMenu(pCharlie);
+    await expect(pCharlie.locator('#draft-controls')).toBeVisible();
+    await closeGameMenu(pCharlie);
+    await passToGuestRoom(pCharlie);
 
-    // All transition to discussion phase
-    await expect(pAlice.locator('h2:has-text("自由討論階段")')).toBeVisible();
+    // All transition to discussion phase; controls live in the table action dock.
+    await expect(pAlice.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+    await expect(pBob.locator('.table-action-dock h2')).toHaveText('自由討論階段');
 
     // Take screenshot of desktop discussion
     await pAlice.screenshot({ path: path.join(evidenceDir, 'task-10-desktop-discussion.png'), fullPage: true });
     // Take screenshot of mobile 360px discussion
     await pBob.screenshot({ path: path.join(evidenceDir, 'task-10-mobile-360-discussion.png'), fullPage: true });
 
-    // Alice (host) advances discussion to voting
-    await pAlice.locator('#btn-advance-vote').click();
+    // Alice (host) advances discussion to voting from the dock
+    await openGameMenu(pAlice);
+    await pAlice.locator('.table-action-dock #btn-advance-vote').click();
 
-    // All enter voting phase
-    await expect(pAlice.locator('h2:has-text("投票指認階段")')).toBeVisible();
-    await expect(pBob.locator('h2:has-text("投票指認階段")')).toBeVisible();
-    await expect(pCharlie.locator('h2:has-text("投票指認階段")')).toBeVisible();
+    // All enter voting phase; the dock form is reachable without opening the drawer.
+    await expect(pAlice.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+    await expect(pBob.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+    await expect(pCharlie.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+    await expect(pBob.locator('.table-action-dock #vote-form')).toBeVisible();
+    // Viewport screenshot: fixed drawer elements are unreliable in fullPage captures.
+    await pBob.screenshot({
+      path: path.join(evidenceDir, 'task-8-game-table-interaction-redesign-dock-mobile-360.png'),
+    });
 
-    // All cast votes
-    await pAlice.locator('#btn-submit-vote').click();
-    await pBob.locator('#btn-submit-vote').click();
-    await pCharlie.locator('#btn-submit-vote').click();
+    // All cast votes; the dock survives the projection rerender after each ballot.
+    await pAlice.locator('.table-action-dock #btn-submit-vote').click();
+    await pBob.locator('.table-action-dock #btn-submit-vote').click();
+    await pCharlie.locator('.table-action-dock #btn-submit-vote').click();
 
     // Results screen appears for all
     await expect(pAlice.locator('#results-panel')).toBeVisible();

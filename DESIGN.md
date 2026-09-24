@@ -95,6 +95,7 @@ To eliminate external network dependencies, improve performance, and guarantee f
 
 ### Traditional Chinese & Content Resilience
 - Handles up to 24-character CJK names via proper overflow wrapping and flex allocation.
+- Ring seats clamp the visual name to three lines (two lines below 1024px) so a 24-character name can never collide with a neighbouring seat; the full name remains in each seat's accessible label.
 - Location names (交誼廳, 畫廊, 撞球室, 書房, 玄關, 餐廳, 鍋爐室) and role titles are displayed in authentic zh-Hant typography.
 - Support for 200% browser text zoom without text clipping, button collapse, or overlapping controls.
 
@@ -115,29 +116,59 @@ To eliminate external network dependencies, improve performance, and guarantee f
 ### Responsive Layout Geometry
 
 1. **Desktop Split (≥ 1024px)**:
-   - Two-column grid: `grid-template-columns: minmax(0, 1.5fr) minmax(360px, 0.9fr);`
+   - Two-column grid: `grid-template-columns: clamp(240px, 22vw, 300px) minmax(0, 1fr);`
    - Gap: `var(--s6)` (24px)
-   - Left side: Action menu, testimony log, private disclosures.
-   - Right side: Witness table panel with dimensional oval table.
+   - Left side (`#game-menu`): Narrow collapsible sidebar — expanded rail shows icon + label; collapsed rail shows 64px icon-only strip.
+   - Right side: Fluid wooden witness table — dominant active surface.
+   - Collapsed sidebar width: `64px` (icon rail); expanded: `clamp(240px, 22vw, 300px)`.
    - Table stage: `min-height: 620px;`
-   - Table oval: `width: min(80%, 376px);`
+   - Table ring: `width: min(100%, 560px);` with the wooden oval filling the ring; seats are positioned from `--seat-x` / `--seat-y`.
+   - `#btn-toggle-game-menu` with `aria-expanded` / `aria-controls="game-menu-content"`.
+   - Collapse state persisted in `sessionStorage` key: `night-of-witnesses.game-menu-collapsed.v1`.
 
 2. **Tablet Layout (768px – 1023px)**:
-   - Single-column stacked layout.
+   - Single-column stacked layout. Menu above table.
    - Table stage: `min-height: 580px;`
-   - Table oval: `width: min(64%, 430px);`
+   - Table ring keeps `width: min(100%, 560px);` so no seat position changes with the breakpoint.
    - Preserves all visual cues, card faces, and seat positions without horizontal overflow.
 
-3. **Mobile Layout (375px – 767px)**:
+3. **Mobile / Coarse-pointer (≤ 767px or `pointer: coarse`)**:
+   - Menu is a **closed-by-default drawer** with persistent `#btn-show-game-menu` button.
+   - Body scroll locked while drawer open; Escape closes and returns focus.
    - Single-column flow with compact table stage (`min-height: 0`).
-   - Table oval: `width: min(100%, 380px); border-width: 9px;`
-   - Player seats arranged in a structured 2-column grid around the central indicator.
-   - Viewer's seat spans full width: `.seat[data-seat="1"] { grid-column: 1 / -1; }`
+   - Table ring: `width: min(100%, 380px);`; wooden oval `border-width: 9px;`
+   - Player seats placed around oval at computed `--seat-x` / `--seat-y` coordinates.
    - Touch targets strictly maintained at `≥ 44px`.
+   - Interaction mode: **tap own card → tap eligible player/Guest Room → mandatory claim dialog**.
 
 4. **Narrow Mobile (360px – 374px)**:
-   - Single-column seat flow: `.seat[data-seat="1"] { grid-column: auto; }`
    - Verified zero page-level horizontal overflow: `scrollWidth <= clientWidth`.
+
+### Canonical Ring Formula
+
+All clients share one canonical clockwise seating ring derived from `projection.players` order. Each client rotates the ring so its viewer appears **bottom-center** (`degrees = 90°`). No client ever independently re-sorts or reverses order.
+
+```
+relativeIndex = (canonicalIndex - viewerIndex + count) % count
+degrees       = 90 - relativeIndex * (360 / count)
+radians       = degrees * Math.PI / 180
+x             = 50 + Math.cos(radians) * 45   // % of table width
+y             = 50 + Math.sin(radians) * 38   // % of table height
+```
+
+- Self always resolves to `(x≈50, y≈88)` (bottom-center).
+- Next canonical player (clockwise) appears to the viewer's **right**.
+- Previous canonical player (clockwise) appears to the viewer's **left**.
+- **Guest Room** is a special center target at `(x=50, y=50)` — never a player seat; it is addressed in the DOM as `[data-target-id="guest-room"]`.
+- Reciprocal invariant: if Player B appears on Player A's right, Player A appears on Player B's left.
+
+### Table Action Dock (`.table-action-dock`)
+
+A persistent strip inside the table panel, below the oval, that hosts:
+- Discussion phase: butler/detective ability buttons, host-advance button.
+- Voting phase: vote form (relocated from the deleted left panel).
+- Draft phase: claim status indicator only (claim dialog is modal).
+- All controls retain their existing element IDs and permission rules.
 
 ---
 
@@ -213,6 +244,38 @@ Every reusable primitive used by two or more screens is defined with structure, 
 - **Empty**: Informative prompt with warm muted text and clear call-to-action.
 - **Recovery**: Disconnect banner with retry action and session status.
 
+### 11. Game Menu (`#game-menu`)
+- **Structure**: Narrow desktop sidebar beside the fluid wooden table; expanded width `clamp(240px, 22vw, 300px)`, collapsed icon rail `64px`.
+- **States**: `data-state="expanded"` shows badge plus label items; `data-state="collapsed"` hides `.game-menu-label` and keeps icon-only targets at `≥ 44px`.
+- **Control**: `#btn-toggle-game-menu` with `aria-expanded` and `aria-controls="game-menu-content"`; the collapsed boolean persists in `sessionStorage` under `night-of-witnesses.game-menu-collapsed.v1`.
+- **Mobile**: Closed-by-default drawer opened by `#btn-show-game-menu`; Escape closes it and returns focus to the persistent show button.
+
+### 12. Guest Room Target (`[data-target-id="guest-room"]`)
+- **Structure**: Visible target pinned to the table center at `(x=50, y=50)`; never part of the seating ring.
+- **States**: Resting, Targeted (`.is-targeted`), Drop-ready (`.is-drop-ready`), Confirmed.
+- **Rule**: Rendered for the final draft actor; submitting a Guest Room pass omits `passToPlayerId`.
+
+### 13. Privacy Card States
+- **Own Face (`.card-face`)**: Rendered face-up only for the viewer's own hand from the viewer projection.
+- **Opponent Back (`.card-back`)**: Exactly one generic back per opponent seat with accessible name 「玩家的隱藏卡牌」; opponent card nodes are back-only and their DOM text, accessible names, `title`, and `data-*` attributes never contain a role, card ID, or label before resolution.
+- **Detail Trigger (`[data-action="view-card"]`)**: A separate ≥44px control on every own card that opens `#card-detail-dialog` without selecting the card; desktop additionally opens the same dialog from card click or Enter/Space.
+- **Result Card (`.result-card`)**: Two-sided card whose back is generic until the table-level `.is-revealed` class; its front is populated only from `projection.result` (`assignedRoles` / `guestRoomCard`).
+
+### 14. Table Dialogs
+- **Card Detail Dialog (`#card-detail-dialog`)**: Native `<dialog class="card-detail">` showing role label, faction, objective, and ability from `ROLES`, `FACTIONS`, and `ROLE_DETAILS`. Includes `#btn-pass-card` only when passing is legal; Escape dismisses and focus returns to the invoking card.
+- **Claim Dialog (`#claim-dialog`)**: Mandatory confirmation step containing `#claim-role-select` (「不特別聲明」 plus every `publicRoleRoster` role), `#btn-confirm-pass`, and `#btn-cancel-pass`. Changing the option never submits; `#btn-cancel-pass` clears the selected card and target.
+
+### 15. Transfer Confirmation States
+- `data-state="idle"`: Card and target selected, confirmation available.
+- `data-state="pending"`: After an accepted local dispatch, `#btn-confirm-pass` is disabled with `aria-busy="true"` and the label 「傳遞中…」; duplicate confirms are impossible until a projection or error resolves the state.
+- `data-state="error"`: A rejected or stale action returns the coordinator to `idle`, clears highlights, and raises a focused `role="alert"` without leaking secrets.
+
+### 16. Result Reveal (`.is-revealed`)
+- **Pre-reveal**: Every player card and the optional Guest Room card renders back-only.
+- **Simultaneous Reveal**: One table-level `.is-revealed` class is applied on the next animation frame so every card turns over simultaneously using only `transform`/`opacity`; the viewer rotation is preserved.
+- **Reduced motion**: Faces render immediately with `transition-duration: 0.01ms` and no transform animation, matching `result.assignedRoles` and `result.guestRoomCard`.
+- **Results Layout (`.results-layout`)**: Summary (winner banner, Boiler Room, identity table, Guest Room info, ballots, rematch/waiting) on the left and the canonical reveal table on the right at `≥1024px`, stacked to one column below. Result cards render outside the seat ring so the table centre stays clear for the Guest Room card.
+
 ---
 
 ## 6. Motion & Interaction
@@ -240,6 +303,10 @@ When reduced motion is requested:
 }
 ```
 All card lift, rotation, and nonessential transitions are suppressed while retaining all state indicators (borders, text, colors).
+
+### Simultaneous Result Reveal
+- The results table adds one `.is-revealed` class on the next animation frame; every player card and the Guest Room card turn over simultaneously from that single class with no per-card stagger.
+- Under `prefers-reduced-motion: reduce` the final faces render immediately: the reveal performs no flip animation and still shows the same `result.assignedRoles` and `result.guestRoomCard` data.
 
 ### Audio Interaction & Settings Anatomy
 - **Architecture**: Client-only, dependency-free Web Audio API via lazy `AudioContext` and master `GainNode`.

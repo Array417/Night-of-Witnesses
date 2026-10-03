@@ -118,8 +118,19 @@ export const playerProjectionSchema = z.object({
   ownBallot: playerLocationSchema.optional(),
   butlerPeek: z.array(cardSchema).optional(),
   detectiveSentLocation: playerLocationSchema.nullable().optional(),
+  discussionConsents: z.array(z.string()).optional().default([]),
+  discussionDeadlineAt: z.number().int().nonnegative().nullable().optional().default(null),
   result: gameResultSchema.optional(),
 });
+
+// ICE server advertised in welcome (no credentials logged server-side)
+export const iceServerSchema = z.object({
+  urls: z.union([z.string().min(1).max(512), z.array(z.string().min(1).max(512)).min(1).max(8)]),
+  username: z.string().min(1).max(512).optional(),
+  credential: z.string().min(1).max(512).optional(),
+});
+
+export type IceServerConfig = z.infer<typeof iceServerSchema>;
 
 // Client messages
 const createRoomSchema = z.object({
@@ -220,6 +231,18 @@ const pongSchema = z.object({
   type: z.literal('pong'),
 });
 
+export const rtcKindSchema = z.enum(['offer', 'answer', 'ice']);
+
+// Authenticated audio signaling: distinct from game commands (no actionId/baseVersion).
+const rtcSignalClientSchema = z
+  .object({
+    type: z.literal('rtc_signal'),
+    targetPlayerId: z.string().min(1),
+    kind: rtcKindSchema,
+    payload: z.string().min(1).max(6000),
+  })
+  .strict();
+
 export const clientMessageSchema = z.discriminatedUnion('type', [
   createRoomSchema,
   joinRoomSchema,
@@ -236,9 +259,11 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
   kickSchema,
   leaveSchema,
   pongSchema,
+  rtcSignalClientSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
+export type RtcSignalClientMessage = z.infer<typeof rtcSignalClientSchema>;
 
 // Server messages
 const welcomeSchema = z.object({
@@ -246,6 +271,7 @@ const welcomeSchema = z.object({
   roomCode: z.string(),
   seatToken: z.string().min(1),
   playerId: z.string().min(1),
+  iceServers: z.array(iceServerSchema).max(8).optional().default([]),
 });
 
 const projectionSchema = z.object({
@@ -269,12 +295,21 @@ const roomClosedSchema = z.object({
   reason: z.string(),
 });
 
+const rtcSignalServerSchema = z.object({
+  type: z.literal('rtc_signal'),
+  fromPlayerId: z.string().min(1),
+  kind: rtcKindSchema,
+  payload: z.string().min(1).max(6000),
+});
+
 export const serverMessageSchema = z.discriminatedUnion('type', [
   welcomeSchema,
   projectionSchema,
   errorSchema,
   pingSchema,
   roomClosedSchema,
+  rtcSignalServerSchema,
 ]);
 
 export type ServerMessage = z.infer<typeof serverMessageSchema>;
+export type RtcSignalServerMessage = z.infer<typeof rtcSignalServerSchema>;

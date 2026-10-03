@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu } from './draft-flow.ts';
+import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu, consentDiscussion } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
@@ -93,8 +93,8 @@ test.describe('authoritative end-to-end game journeys', () => {
     await expect(pBob.locator('.table-action-dock h2')).toHaveText('自由討論階段');
     await expect(pCharlie.locator('.table-action-dock h2')).toHaveText('自由討論階段');
 
-    // Host advances discussion to voting from the dock
-    await pAlice.locator('.table-action-dock #btn-advance-vote').click();
+    // Every player (host included) consents from the dock; unanimous consent advances.
+    await consentDiscussion([pAlice, pBob, pCharlie]);
 
     // All enter voting phase; the dock survives the projection rerender.
     await expect(pAlice.locator('.table-action-dock h2')).toHaveText('投票指認階段');
@@ -241,13 +241,8 @@ test.describe('authoritative end-to-end game journeys', () => {
     }
 
     if (!resolvedViaDetective) {
-      await p1.locator('.table-action-dock #btn-advance-vote').click();
-      // Every client must observe voting before any ballot is cast; a peeking Butler
-      // abstains, so the round can resolve on the third vote and the last page would
-      // otherwise race straight past this heading.
-      for (const p of pages) {
-        await expect(p.locator('.table-action-dock h2')).toHaveText('投票指認階段');
-      }
+      // Every player consents; unanimous consent advances immediately.
+      await consentDiscussion(pages);
       for (const p of pages) {
         const voteBtn = p.locator('.table-action-dock #btn-submit-vote');
         if (await voteBtn.isVisible()) {

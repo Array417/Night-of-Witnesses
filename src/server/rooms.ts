@@ -1,6 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createGame, reduceGame, type GameAction } from '../shared/game.ts';
 import type { CanonicalGameState, PlayerProjection } from '../shared/state.ts';
+import {
+  DISCUSSION_DEADLINE_MS,
+  clearDiscussion,
+  hasDiscussionMajority,
+  isDiscussionUnanimous,
+} from '../shared/discussion.ts';
 import { projectForViewer } from './project.ts';
 import { RulesError } from '../shared/rules.ts';
 
@@ -261,6 +267,10 @@ export class RoomManager {
 
     room.lastActivityAt = now;
 
+    // Membership change re-evaluates the connected denominator (no deadline reset).
+    this.maybeForceDiscussionVote(room);
+    this.maybeArmDiscussionDeadline(room);
+
     return {
       roomCode: code,
       seatToken,
@@ -283,6 +293,29 @@ export class RoomManager {
     if (playerInState) {
       playerInState.connected = false;
     }
+
+    // Membership change re-evaluates the connected denominator (no deadline reset).
+    this.maybeForceDiscussionVote(room);
+    this.maybeArmDiscussionDeadline(room);
+  }
+
+  /** Unanimous connected consent forces voting. Armed deadline is never reset here. */
+  private maybeForceDiscussionVote(room: RoomRecord): boolean {
+    if (room.state.phase !== 'discussion') return false;
+    if (!isDiscussionUnanimous(room.state)) return false;
+    room.state.phase = 'voting';
+    clearDiscussion(room.state);
+    room.state.version += 1;
+    room.lastActivityAt = this.getTime();
+    return true;
+  }
+
+  /** Arm the server deadline once when strict majority is reached. Never extends. */
+  private maybeArmDiscussionDeadline(room: RoomRecord): void {
+    if (room.state.phase !== 'discussion') return;
+    if (room.state.discussionDeadlineAt !== null && room.state.discussionDeadlineAt !== undefined) return;
+    if (!hasDiscussionMajority(room.state)) return;
+    room.state.discussionDeadlineAt = this.getTime() + DISCUSSION_DEADLINE_MS;
   }
 
   dispatchAction(
@@ -340,7 +373,45 @@ export class RoomManager {
     seat.lastSeenAt = now;
     room.lastActivityAt = now;
 
+    // Server-time deadline arming (reducer stays pure): strict majority arms once.
+    this.maybeArmDiscussionDeadline(room);
+
     return { projection: projectForViewer(room.state, playerId) };
+  }
+
+  /**
+   * Expire one room's armed discussion deadline. Server time only.
+   * Returns true when the deadline forced a transition to voting.
+   */
+  checkDiscussionDeadline(roomCode: string): boolean {
+    const room = this.rooms.get(roomCode.toUpperCase());
+    if (!room) return false;
+    if (room.state.phase !== 'discussion') return false;
+    const deadline = room.state.discussionDeadlineAt;
+    if (deadline === null || deadline === undefined) return false;
+    if (this.getTime() < deadline) return false;
+    room.state.phase = 'voting';
+    clearDiscussion(room.state);
+    room.state.version += 1;
+    room.lastActivityAt = this.getTime();
+    return true;
+  }
+
+  /** Expire armed discussion deadlines across all rooms. Returns changed room codes. */
+  checkAllDiscussionDeadlines(): string[] {
+    const changed: string[] = [];
+    for (const room of this.rooms.values()) {
+      if (room.state.phase !== 'discussion') continue;
+      const deadline = room.state.discussionDeadlineAt;
+      if (deadline === null || deadline === undefined) continue;
+      if (this.getTime() < deadline) continue;
+      room.state.phase = 'voting';
+      clearDiscussion(room.state);
+      room.state.version += 1;
+      room.lastActivityAt = this.getTime();
+      changed.push(room.code);
+    }
+    return changed;
   }
 
   checkExpiry(roomCode: string): void {
@@ -398,6 +469,7 @@ export class RoomManager {
       room.state.pendingCards = {};
       room.state.keptRoles = {};
       room.state.guestRoomCard = null;
+      clearDiscussion(room.state);
       room.state.version += 1;
     }
 

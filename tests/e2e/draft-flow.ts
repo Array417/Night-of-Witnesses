@@ -163,15 +163,26 @@ export async function completeDraft(pages: readonly Page[]): Promise<void> {
   }
 }
 
-/** Discussion → voting → ballots, then every page must show the results panel. */
-export async function playToResults(pages: readonly Page[]): Promise<void> {
-  await completeDraft(pages);
-  const host = pages[0];
-  await expect(host.locator('.table-action-dock h2')).toHaveText('自由討論階段');
-  await host.locator('.table-action-dock #btn-advance-vote').click();
+/**
+ * Every connected player (host included) consents to end the discussion.
+ * Unanimous consent advances immediately, so this helper ends in the voting phase.
+ */
+export async function consentDiscussion(pages: readonly Page[]): Promise<void> {
+  for (const page of pages) {
+    await expect(page.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+    const consent = page.locator('.table-action-dock #btn-advance-vote');
+    await expect(consent).toBeVisible();
+    if (await consent.isEnabled()) await consent.click();
+  }
   for (const page of pages) {
     await expect(page.locator('.table-action-dock h2')).toHaveText('投票指認階段');
   }
+}
+
+/** Discussion → voting → ballots, then every page must show the results panel. */
+export async function playToResults(pages: readonly Page[]): Promise<void> {
+  await completeDraft(pages);
+  await consentDiscussion(pages);
   for (const page of pages) {
     await page.locator('.table-action-dock #btn-submit-vote').click();
   }

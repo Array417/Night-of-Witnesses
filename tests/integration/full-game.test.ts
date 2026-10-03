@@ -127,6 +127,9 @@ describe('authoritative wire journeys and recovery contracts', () => {
             client.playerId = parsed.playerId;
           } else if (parsed.type === 'projection') {
             client.lastProjection = parsed.projection;
+          } else if (parsed.type === 'ping') {
+            // Honor the heartbeat contract or the server terminates idle sockets.
+            ws.send(JSON.stringify({ type: 'pong' }));
           }
         } catch {
           // ignore
@@ -283,11 +286,35 @@ describe('authoritative wire journeys and recovery contracts', () => {
       c3.waitFor((m) => m.type === 'projection' && m.projection.phase === 'discussion'),
     ]);
 
-    // Alice advances to voting
+    // Unanimous consent: Alice, Bob, then Charlie advance (any connected player may consent)
     c1.send({
       type: 'advance_to_vote',
       actionId: '10000000-0000-4000-8000-000000000011',
       baseVersion: c1.lastProjection!.version,
+    });
+
+    await Promise.all([
+      c1.waitFor((m) => m.type === 'projection' && m.projection.discussionConsents.length === 1),
+      c2.waitFor((m) => m.type === 'projection' && m.projection.discussionConsents.length === 1),
+      c3.waitFor((m) => m.type === 'projection' && m.projection.discussionConsents.length === 1),
+    ]);
+
+    c2.send({
+      type: 'advance_to_vote',
+      actionId: '10000000-0000-4000-8000-000000000021',
+      baseVersion: c2.lastProjection!.version,
+    });
+
+    await Promise.all([
+      c1.waitFor((m) => m.type === 'projection' && m.projection.discussionConsents.length === 2),
+      c2.waitFor((m) => m.type === 'projection' && m.projection.discussionConsents.length === 2),
+      c3.waitFor((m) => m.type === 'projection' && m.projection.discussionConsents.length === 2),
+    ]);
+
+    c3.send({
+      type: 'advance_to_vote',
+      actionId: '10000000-0000-4000-8000-000000000031',
+      baseVersion: c3.lastProjection!.version,
     });
 
     await Promise.all([
@@ -536,6 +563,18 @@ describe('authoritative wire journeys and recovery contracts', () => {
       for (const other of otherClients) {
         assert.equal(other.lastProjection!.butlerPeek, undefined);
       }
+
+      // Sync every other client to the post-peek version so later versioned sends
+      // (detective_send, advance_to_vote) cannot go out stale. The peeker
+      // already holds peekVersion; including it would deadlock the barrier.
+      const peekVersion = butlerClient.lastProjection!.version;
+      await Promise.all(
+        clients
+          .filter((c) => c !== butlerClient)
+          .map((c) =>
+            c.waitFor((m) => m.type === 'projection' && m.projection.version >= peekVersion)
+          )
+      );
     }
 
     if (detectiveClient) {
@@ -554,12 +593,25 @@ describe('authoritative wire journeys and recovery contracts', () => {
       );
       assert.ok(c1.lastProjection!.result);
     } else {
-      // Advance to vote normally
-      c1.send({
-        type: 'advance_to_vote',
-        actionId: '20000000-0000-4000-8000-000000000017',
-        baseVersion: c1.lastProjection!.version,
-      });
+      // Advance to vote requires unanimous consent of all connected players
+      const consenters = [c1, c2, c3, c4];
+      for (let i = 0; i < consenters.length; i++) {
+        const c = consenters[i];
+        c.send({
+          type: 'advance_to_vote',
+          actionId: `20000000-0000-4000-8000-00000000002${i}`,
+          baseVersion: c.lastProjection!.version,
+        });
+        if (i < consenters.length - 1) {
+          await Promise.all(
+            clients.map((w) =>
+              w.waitFor(
+                (m) => m.type === 'projection' && m.projection.discussionConsents.length === i + 1
+              )
+            )
+          );
+        }
+      }
       await Promise.all(clients.map((c) => c.waitFor((m) => m.type === 'projection' && m.projection.phase === 'voting')));
     }
 
@@ -567,6 +619,32 @@ describe('authoritative wire journeys and recovery contracts', () => {
     c2.close();
     c3.close();
     c4.close();
+  });
+
+  test('heartbeat survival: idle socket stays alive past termination windows', async () => {
+    const c = await createTestClient('Heartbeat');
+    c.send({
+      type: 'create_room',
+      actionId: '40000000-0000-4000-8000-000000000001',
+      playerName: 'Heartbeat',
+    });
+    await c.waitFor((m) => m.type === 'welcome');
+    await c.waitFor((m) => m.type === 'projection');
+
+    // Idle longer than two 500ms heartbeat windows; the socket must survive.
+    await new Promise((r) => setTimeout(r, 1300));
+
+    c.send({
+      type: 'set_ready',
+      actionId: '40000000-0000-4000-8000-000000000002',
+      baseVersion: c.lastProjection!.version,
+      ready: true,
+    });
+    const proj = await c.waitFor(
+      (m) => m.type === 'projection' && m.projection.players[0].ready
+    );
+    assert.equal(proj.type, 'projection');
+    c.close();
   });
 
   test('hardened failure & recovery contracts: stale, duplicate, forged token, disconnect grace & host transfer', async () => {

@@ -8,6 +8,7 @@ import {
   closeGameMenu,
   startRoom,
   playToResults,
+  consentDiscussion,
   installRevealProbe,
 } from './draft-flow.ts';
 import { getTableSeats } from '../../src/client/views/game-seating.ts';
@@ -89,8 +90,8 @@ test.describe('Results, Loading, Empty and Recovery States', () => {
     await passToGuestRoom(pCharlie);
 
     // 3. Discussion to Voting; phase controls live in the table action dock.
-    await expect(pAlice.locator('.table-action-dock #btn-advance-vote')).toBeVisible({ timeout: 10000 });
-    await pAlice.locator('.table-action-dock #btn-advance-vote').click();
+    await expect(pAlice.locator('.table-action-dock .discussion-consent')).toBeVisible({ timeout: 10000 });
+    await consentDiscussion([pAlice, pBob, pCharlie]);
 
     await expect(pAlice.locator('.table-action-dock #vote-form')).toBeVisible({ timeout: 10000 });
     await expect(pBob.locator('.table-action-dock #vote-form')).toBeVisible();
@@ -727,12 +728,7 @@ test.describe('CJK heading line integrity', () => {
       }
 
       // Discussion → voting → results, then measure the winner banner at every required width.
-      const host = pages[0];
-      await expect(host.locator('.table-action-dock h2')).toHaveText('自由討論階段');
-      await host.locator('.table-action-dock #btn-advance-vote').click();
-      for (const page of pages) {
-        await expect(page.locator('.table-action-dock h2')).toHaveText('投票指認階段');
-      }
+      await consentDiscussion(pages);
       for (const page of pages) {
         await page.locator('.table-action-dock #btn-submit-vote').click();
       }

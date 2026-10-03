@@ -28,6 +28,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy built artifacts from builder
 COPY --from=builder /app/dist ./dist
+COPY scripts/add-bots.mjs ./scripts/add-bots.mjs
 
 # Run as built-in non-root user 'node'
 USER node

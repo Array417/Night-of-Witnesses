@@ -33,6 +33,7 @@ describe('protocol and projection contracts', () => {
       { type: 'kick', actionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', baseVersion: 9, targetPlayerId: 'p3' },
       { type: 'leave', actionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', baseVersion: 10 },
       { type: 'pong' },
+      { type: 'rtc_signal', targetPlayerId: 'p2', kind: 'offer', payload: 'v=0\r\n' },
     ];
 
     for (const msg of validMessages) {
@@ -81,14 +82,17 @@ describe('protocol and projection contracts', () => {
       currentActorId: null,
       servedPlayerIds: [],
       testimonyTrail: [],
+      discussionConsents: [],
+      discussionDeadlineAt: null,
     };
 
     const validServerMessages: ServerMessage[] = [
-      { type: 'welcome', roomCode: 'ABCDEF', seatToken: 'tok-1', playerId: 'p1' },
+      { type: 'welcome', roomCode: 'ABCDEF', seatToken: 'tok-1', playerId: 'p1', iceServers: [] },
       { type: 'projection', projection: projectionFixture },
       { type: 'error', code: 'ACTION_FAILED', message: 'Action rejected' },
       { type: 'ping' },
       { type: 'room_closed', reason: 'Room expired' },
+      { type: 'rtc_signal', fromPlayerId: 'p1', kind: 'answer', payload: 'v=0\r\n' },
     ];
 
     for (const msg of validServerMessages) {
@@ -98,9 +102,31 @@ describe('protocol and projection contracts', () => {
     }
   });
 
+  test('welcome without iceServers parses via schema default; oversized rtc payload rejected', () => {
+    const welcomeNoIce = {
+      type: 'welcome',
+      roomCode: 'ABCDEF',
+      seatToken: 'tok-1',
+      playerId: 'p1',
+    };
+    const parsed = serverMessageSchema.safeParse(welcomeNoIce);
+    assert.ok(parsed.success);
+    if (parsed.success && parsed.data.type === 'welcome') {
+      assert.deepEqual(parsed.data.iceServers, []);
+    }
+    assert.equal(
+      clientMessageSchema.safeParse({
+        type: 'rtc_signal',
+        targetPlayerId: 'p2',
+        kind: 'offer',
+        payload: 'x'.repeat(6001),
+      }).success,
+      false,
+    );
+  });
+
   test('projection contains no forbidden canonical keys or other-seat canary secrets', () => {
-    const canarySecrets = {
-      otherRoleSecret: 'CANARY_OTHER_PLAYER_ROLE_12345',
+    const canarySecrets = {      otherRoleSecret: 'CANARY_OTHER_PLAYER_ROLE_12345',
       deckSecret: 'CANARY_SECRET_DECK_ORDER_67890',
       setAsideSecret: 'CANARY_SET_ASIDE_SECRET_99999',
       seatTokenSecret: 'CANARY_SEAT_TOKEN_PRIVATE_88888',
@@ -124,6 +150,8 @@ describe('protocol and projection contracts', () => {
       testimonyTrail: [
         { fromPlayerId: 'p1', toPlayerId: 'p2', testimonyRole: 'guest' },
       ],
+      discussionConsents: [],
+      discussionDeadlineAt: null,
       ownRole: { id: 'detective', role: 'detective', label: '偵探' },
     };
 
@@ -159,6 +187,7 @@ function assertExhaustiveClientMessage(msg: ClientMessage): void {
     case 'kick':
     case 'leave':
     case 'pong':
+    case 'rtc_signal':
       return;
     default: {
       const _exhaustive: never = msg;
@@ -174,6 +203,7 @@ function assertExhaustiveServerMessage(msg: ServerMessage): void {
     case 'error':
     case 'ping':
     case 'room_closed':
+    case 'rtc_signal':
       return;
     default: {
       const _exhaustive: never = msg;

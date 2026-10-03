@@ -10,6 +10,12 @@ import {
   clearSavedSeat,
   setRoomCodeInUrl,
 } from './session.ts';
+import { VoiceController } from './voice/controller.ts';
+import {
+  MAX_SIGNAL_PAYLOAD_CHARS,
+  extractIceServers,
+  parseIncomingRtcSignal,
+} from './voice/signaling.ts';
 
 export type ConnectionStatus =
   | 'connecting'
@@ -30,6 +36,7 @@ type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : nev
 const BACKOFF_DELAYS = [500, 1000, 2000, 4000, 8000];
 
 export class GameClient {
+  readonly voice: VoiceController;
   private ws: WebSocket | null = null;
   private status: ConnectionStatus = 'disconnected';
   private currentProjection: PlayerProjection | null = null;
@@ -38,9 +45,16 @@ export class GameClient {
   private reconnectTimer: NodeJS.Timeout | number | null = null;
   private explicitDisconnect = false;
   private events: GameClientEvents = {};
+  private voiceIceServers: RTCIceServer[] = [];
+  private lastActionType: string | null = null;
+  private advanceRetried = false;
+  private pendingAdvanceRetry = false;
 
   constructor(events: GameClientEvents = {}) {
     this.events = events;
+    this.voice = new VoiceController((targetPlayerId, kind, payload) => {
+      this.sendRtcSignal(targetPlayerId, kind, payload);
+    });
   }
 
   getStatus(): ConnectionStatus {
@@ -119,17 +133,25 @@ export class GameClient {
         return;
       }
 
+      const voiceSignal = parseIncomingRtcSignal(parsed);
+      if (voiceSignal) {
+        this.voice.handleSignal(voiceSignal.fromPlayerId, voiceSignal.kind, voiceSignal.payload);
+        return;
+      }
+
       const result = serverMessageSchema.safeParse(parsed);
       if (!result.success) {
         return;
       }
 
-      this.handleServerMessage(result.data);
+      this.handleServerMessage(result.data, parsed);
     };
 
     this.ws.onclose = () => {
       this.ws = null;
       this.inFlightAction = false;
+      this.pendingAdvanceRetry = false;
+      this.voice.dispose();
       if (!this.explicitDisconnect) {
         this.setStatus('disconnected');
         this.scheduleReconnect();
@@ -143,6 +165,8 @@ export class GameClient {
 
   disconnect(): void {
     this.explicitDisconnect = true;
+    this.pendingAdvanceRetry = false;
+    this.voice.dispose();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -173,17 +197,62 @@ export class GameClient {
     }
   }
 
-  private handleServerMessage(msg: ServerMessage): void {
+  private sendRtcSignal(
+    targetPlayerId: string,
+    kind: 'offer' | 'answer' | 'ice',
+    payload: string,
+  ): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (payload.length > MAX_SIGNAL_PAYLOAD_CHARS) return;
+    this.ws.send(JSON.stringify({ type: 'rtc_signal', targetPlayerId, kind, payload }));
+  }
+
+  private syncVoice(): void {
+    const projection = this.currentProjection;
+    if (!projection) {
+      this.voice.sync({
+        roomCode: null,
+        selfId: null,
+        peerIds: [],
+        phase: '',
+        iceServers: this.voiceIceServers,
+      });
+      return;
+    }
+    const peerIds = projection.players
+      .filter((player) => player.connected && player.playerId !== projection.viewerId)
+      .map((player) => player.playerId);
+    this.voice.sync({
+      roomCode: projection.roomCode,
+      selfId: projection.viewerId,
+      peerIds,
+      phase: projection.phase,
+      iceServers: this.voiceIceServers,
+    });
+  }
+
+  private handleServerMessage(msg: ServerMessage, raw: unknown): void {
     switch (msg.type) {
       case 'welcome': {
         saveSeat(msg.roomCode, msg.seatToken);
         setRoomCodeInUrl(msg.roomCode);
+        this.voiceIceServers = extractIceServers(raw);
+        this.voice.dispose();
         break;
       }
       case 'projection': {
         this.currentProjection = msg.projection;
         this.inFlightAction = false;
         setRoomCodeInUrl(msg.projection.roomCode);
+        this.syncVoice();
+        if (this.pendingAdvanceRetry) {
+          this.pendingAdvanceRetry = false;
+          if (msg.projection.phase === 'discussion') {
+            if (this.dispatchAction({ type: 'advance_to_vote' })) {
+              this.advanceRetried = true;
+            }
+          }
+        }
         this.events.onProjection?.(msg.projection);
         break;
       }
@@ -192,6 +261,14 @@ export class GameClient {
         // If reconnect token is invalid, clear storage
         if (msg.code === 'INVALID_TOKEN' || msg.code === 'ROOM_UNAVAILABLE') {
           clearSavedSeat();
+        }
+        if (
+          msg.code === 'STALE_VERSION' &&
+          this.lastActionType === 'advance_to_vote' &&
+          !this.advanceRetried
+        ) {
+          this.advanceRetried = true;
+          this.pendingAdvanceRetry = true;
         }
         this.events.onError?.(msg.code, msg.message);
         break;
@@ -205,6 +282,8 @@ export class GameClient {
         setRoomCodeInUrl(null);
         this.currentProjection = null;
         this.inFlightAction = false;
+        this.pendingAdvanceRetry = false;
+        this.voice.dispose();
         this.events.onRoomClosed?.(msg.reason);
         break;
       }
@@ -249,6 +328,9 @@ export class GameClient {
     }
 
     this.inFlightAction = true;
+    this.lastActionType = action.type;
+    this.advanceRetried = false;
+    this.pendingAdvanceRetry = false;
     const msg = {
       ...action,
       actionId: crypto.randomUUID(),
@@ -256,6 +338,9 @@ export class GameClient {
     } as ClientMessage;
 
     this.sendRaw(msg);
+    if (action.type === 'leave') {
+      this.voice.dispose();
+    }
     return true;
   }
 }

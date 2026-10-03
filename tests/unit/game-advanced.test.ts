@@ -116,13 +116,15 @@ describe('advanced roles and winner precedence (L7-L8 truth table)', () => {
       (err: unknown) => err instanceof RulesError && err.code === 'INVALID_ACTION'
     );
 
-    // Advance to voting
-    state = reduceGame(state, {
-      type: 'advance_to_vote',
-      actionId: '00000000-0000-4000-8000-000000004004',
-      baseVersion: state.version,
-      playerId: 'p1',
-    });
+    // Advance to voting requires unanimous consent of all connected players
+    for (const [i, pid] of ['p1', 'p2', 'p3', 'p4'].entries()) {
+      state = reduceGame(state, {
+        type: 'advance_to_vote',
+        actionId: `00000000-0000-4000-8000-0000000040${i}4`,
+        baseVersion: state.version,
+        playerId: pid,
+      });
+    }
 
     // Butler voting is rejected due to enforced abstention
     assert.throws(

@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { completeDraft, startRoom } from './draft-flow.ts';
+import { completeDraft, consentDiscussion, startRoom } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
@@ -46,10 +46,22 @@ test.describe('Discussion and Voting Phases with Sound Mapping and Privacy', () 
       await expect(p1.locator('#phase-action-panel')).toHaveCount(0);
       const discussionDockCount = await p1.locator('.table-action-dock').count();
 
-      // Host has the advance button inside the dock, guests have waiting text
-      await expect(p1.locator('.table-action-dock #btn-advance-vote')).toBeVisible();
-      await expect(p2.locator('.table-action-dock #btn-advance-vote')).toHaveCount(0);
-      await expect(p2.locator('.table-action-dock')).toContainText('等待房主結束討論');
+      // Every connected player — host included — sees the same consent control.
+      for (const page of pages) {
+        await expect(page.locator('.table-action-dock .discussion-consent')).toBeVisible();
+        await expect(page.locator('.table-action-dock #btn-advance-vote')).toBeVisible();
+        await expect(page.locator('.table-action-dock .discussion-consent-progress')).toContainText(
+          '0 / 3'
+        );
+      }
+
+      // No host bypass: the host's single consent keeps the room in discussion.
+      await p1.locator('.table-action-dock #btn-advance-vote').click();
+      await expect(p1.locator('.table-action-dock #btn-advance-vote')).toBeDisabled();
+      await expect(p1.locator('.table-action-dock .discussion-consent-progress')).toContainText(
+        '1 / 3'
+      );
+      await expect(p2.locator('.table-action-dock h2')).toHaveText('自由討論階段');
 
       // Ability controls are dock-scoped whenever the viewer holds that role.
       for (const page of pages) {
@@ -68,8 +80,10 @@ test.describe('Discussion and Voting Phases with Sound Mapping and Privacy', () 
       const discShotPath = path.join(evidenceDir, 'opendesign-task-6-phases-discussion.png');
       await p1.screenshot({ path: discShotPath, fullPage: true });
 
-      // 3. Host advances to Voting Phase from the dock
-      await p1.locator('.table-action-dock #btn-advance-vote').click();
+      // 3. A strict majority starts the 15s deadline; the final consent is unanimous.
+      await p2.locator('.table-action-dock #btn-advance-vote').click();
+      await expect(p2.locator('.table-action-dock .discussion-countdown')).toContainText('剩餘');
+      await p3.locator('.table-action-dock #btn-advance-vote').click();
 
       await expect(p1.locator('.table-action-dock h2')).toHaveText('投票指認階段');
       await expect(p2.locator('.table-action-dock h2')).toHaveText('投票指認階段');
@@ -118,14 +132,17 @@ test.describe('Discussion and Voting Phases with Sound Mapping and Privacy', () 
         privacyPreserved: true,
         audioTriggersVerified: true,
         dockHosted: true,
+        consentFlow: 'all-player',
       }, null, 2));
       fs.writeFileSync(
         path.join(evidenceDir, 'task-8-game-table-interaction-redesign-phases.json'),
         JSON.stringify(
           {
             discussionDockCount,
-            hostAdvanceInDock: true,
-            guestAdvanceAbsent: true,
+            allPlayersConsentInDock: true,
+            hostBypassAbsent: true,
+            strictMajorityCountdownStarted: true,
+            unanimousImmediateAdvance: true,
             votingFormInDock: true,
             leftPhasePanelAbsent: true,
             resultsReached: true,
@@ -155,11 +172,7 @@ test.describe('Discussion and Voting Phases with Sound Mapping and Privacy', () 
 
     try {
       await completeDraft(pages);
-      await expect(p1.locator('.table-action-dock h2')).toHaveText('自由討論階段');
-      await p1.locator('.table-action-dock #btn-advance-vote').click();
-      for (const page of pages) {
-        await expect(page.locator('.table-action-dock h2')).toHaveText('投票指認階段');
-      }
+      await consentDiscussion(pages);
 
       // Duplicate submit: two synchronous submit events in one task produce exactly one frame.
       await p2.evaluate(() => {
@@ -202,6 +215,54 @@ test.describe('Discussion and Voting Phases with Sound Mapping and Privacy', () 
         retrySucceeded: true,
         resultsReached: true,
       }, null, 2));
+    } finally {
+      await Promise.all(contexts.map((context) => context.close()));
+    }
+  });
+
+  test('strict-majority consent starts the 15s deadline and the server forces voting with no browser advance', async ({ browser }) => {
+    const { pages, contexts } = await startRoom(browser, ['愛麗絲', '鮑伯', '查理']);
+    const [p1, p2, p3] = pages;
+
+    try {
+      await completeDraft(pages);
+
+      // P1 and P2 consent (2 of 3 is a strict majority); P3 never clicks.
+      await p1.locator('.table-action-dock #btn-advance-vote').click();
+      await p2.locator('.table-action-dock #btn-advance-vote').click();
+      const countdown = p3.locator('.table-action-dock .discussion-countdown');
+      await expect(countdown).toContainText('剩餘');
+
+      // The countdown ticks from the server deadline, and P3 can still consent.
+      const first = (await countdown.textContent()) ?? '';
+      await p1.waitForTimeout(1200);
+      const second = (await countdown.textContent()) ?? '';
+      expect(second).not.toBe(first);
+      await expect(p3.locator('.table-action-dock #btn-advance-vote')).toBeEnabled();
+
+      // Nobody sends a forced advance: the server deadline alone moves every client.
+      await expect(p3.locator('.table-action-dock h2')).toHaveText('投票指認階段', {
+        timeout: 25000,
+      });
+      await expect(p1.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+      await expect(p2.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+      // The countdown interval and its DOM are gone with the discussion dock.
+      await expect(p1.locator('.discussion-countdown')).toHaveCount(0);
+
+      fs.writeFileSync(
+        path.join(evidenceDir, 'discussion-consent-forced-transition.json'),
+        JSON.stringify(
+          {
+            consentsBeforeDeadline: 2,
+            totalPlayers: 3,
+            countdownTicked: true,
+            browserAdvanceSent: false,
+            serverForcedVoting: true,
+          },
+          null,
+          2
+        )
+      );
     } finally {
       await Promise.all(contexts.map((context) => context.close()));
     }

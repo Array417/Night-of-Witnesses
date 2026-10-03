@@ -5,7 +5,7 @@ const roomCode = process.argv[2]?.trim().toUpperCase();
 const names = process.argv.slice(3);
 const botNames = names.length === 0 ? DEFAULT_NAMES : names;
 const wsUrl = process.env.WS_URL || `ws://${process.env.HOST || '127.0.0.1'}:${process.env.PORT || '3000'}/ws`;
-const origin = process.env.ORIGIN || 'http://127.0.0.1:3000';
+const origin = process.env.ORIGIN || 'http://localhost:3000';
 
 if (!roomCode || roomCode.length !== 6 || botNames.length !== 3) {
   console.error('Usage: npm run add-bots -- ROOMCODE [BOT1 BOT2 BOT3]');
@@ -68,6 +68,12 @@ function joinBot(name) {
           if (target) {
             sendAction(projection, { type: 'detective_send', targetLocation: target });
           }
+          return;
+        }
+        // Consent to advance: every connected player (bots included) must consent.
+        const consents = projection.discussionConsents || [];
+        if (!consents.includes(projection.viewerId)) {
+          sendAction(projection, { type: 'advance_to_vote' });
         }
         return;
       }

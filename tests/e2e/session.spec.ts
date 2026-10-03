@@ -5,6 +5,7 @@ import {
   CLAIM_DIALOG,
   armCard,
   completeDraft,
+  consentDiscussion,
   firstSeatTarget,
   startRoom,
 } from './draft-flow.ts';
@@ -226,10 +227,7 @@ test.describe('browser session and network transport', () => {
     try {
       await completeDraft(pages);
       await expect(alice.locator('.table-action-dock h2')).toHaveText('自由討論階段');
-      await alice.locator('.table-action-dock #btn-advance-vote').click();
-      for (const page of pages) {
-        await expect(page.locator('.table-action-dock h2')).toHaveText('投票指認階段');
-      }
+      await consentDiscussion(pages);
 
       const seatIdsBefore = await alice
         .locator('.table-panel .seat')

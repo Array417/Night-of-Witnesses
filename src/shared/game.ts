@@ -15,6 +15,7 @@ import type {
   PlayerRecord,
   TestimonyEntry,
 } from './state.ts';
+import { clearDiscussion, isDiscussionUnanimous } from './discussion.ts';
 
 export type GameAction =
   | {
@@ -132,6 +133,8 @@ export function createGame(options: CreateGameOptions): CanonicalGameState {
     butlerPeeked: false,
     detectiveUsed: false,
     detectiveTargetLocation: null,
+    discussionConsents: [],
+    discussionDeadlineAt: null,
     votes: {},
     lawyerTargetLocation: null,
     result: null,
@@ -157,6 +160,9 @@ export function reduceGame(
   }
 
   const next = cloneState(currentState);
+  // Backfill discussion fields for old fixtures/snapshots.
+  next.discussionConsents ??= [];
+  next.discussionDeadlineAt ??= null;
 
   switch (action.type) {
     case 'add_player': {
@@ -324,6 +330,8 @@ export function reduceGame(
         next.guestRoomCard = passedCard;
         next.currentActorId = null;
         next.phase = 'discussion';
+        next.discussionConsents = [];
+        next.discussionDeadlineAt = null;
       } else {
         if (!action.passToPlayerId) {
           throw new RulesError('INVALID_ACTION', 'Must specify passToPlayerId for non-final player');
@@ -353,10 +361,23 @@ export function reduceGame(
       if (next.phase !== 'discussion') {
         throw new RulesError('INVALID_ACTION', 'Can only advance to vote from discussion phase');
       }
-      if (action.playerId !== next.hostPlayerId) {
-        throw new RulesError('INVALID_ACTION', 'Only the host can advance discussion to vote');
+      const player = next.players.find((p) => p.playerId === action.playerId);
+      if (!player) {
+        throw new RulesError('INVALID_ACTION', 'Player not in room');
       }
-      next.phase = 'voting';
+      if (!player.connected) {
+        throw new RulesError('INVALID_ACTION', 'Disconnected players cannot consent to vote');
+      }
+      // Irreversible consent: duplicate is an idempotent no-op (no version bump).
+      if (next.discussionConsents.includes(action.playerId)) {
+        return next;
+      }
+      next.discussionConsents.push(action.playerId);
+      // Unanimous consent of all connected players (>0) transitions immediately.
+      if (isDiscussionUnanimous(next)) {
+        next.phase = 'voting';
+        clearDiscussion(next);
+      }
       next.version += 1;
       return next;
     }
@@ -398,6 +419,7 @@ export function reduceGame(
 
       // Detective immediately resolves the round without voting!
       resolveRound(next, action.targetLocation);
+      clearDiscussion(next);
       next.version += 1;
       return next;
     }
@@ -434,6 +456,7 @@ export function reduceGame(
       const allVoted = eligibleVoters.every((p) => next.votes[p.playerId]);
       if (allVoted) {
         resolveRound(next);
+        clearDiscussion(next);
       }
 
       next.version += 1;
@@ -470,6 +493,7 @@ export function reduceGame(
       next.votes = {};
       next.lawyerTargetLocation = null;
       next.result = null;
+      clearDiscussion(next);
 
       next.version += 1;
       return next;

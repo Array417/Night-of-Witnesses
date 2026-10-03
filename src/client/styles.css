@@ -1012,6 +1012,63 @@ select:hover {
   margin-bottom: 0;
 }
 
+/* All-player discussion consent (DESIGN.md §5.17). */
+.discussion-consent {
+  width: 100%;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent 36%),
+    var(--panel-2);
+}
+
+.discussion-consent h3 {
+  margin-bottom: var(--s1);
+}
+
+.discussion-consent-progress {
+  color: var(--ink);
+  font-size: 0.95rem;
+  margin-bottom: var(--s1);
+}
+
+.discussion-countdown {
+  color: var(--accent-hover);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--s2);
+}
+
+.discussion-countdown.is-urgent {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* Discussion voice panel (DESIGN.md §5.18). */
+.voice-panel {
+  width: 100%;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), transparent 36%),
+    var(--panel-2);
+}
+
+.voice-panel h3 {
+  margin-bottom: var(--s1);
+}
+
+.voice-status {
+  margin-bottom: var(--s2);
+}
+
+.voice-actions {
+  margin-bottom: var(--s2);
+}
+
+
 /* Viewer's face-up hand slot below the table. */
 .hand-slot {
   display: flex;
@@ -1259,6 +1316,69 @@ dialog::backdrop {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
 }
 
+/* Persistent voice/sound settings disclosure (DESIGN.md §5.18). */
+#settings-panel {
+  position: relative;
+}
+
+#settings-panel summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #3a2118, #25140e);
+  color: #f3dfba;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+#settings-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+#settings-panel summary::marker {
+  content: "";
+}
+
+#settings-panel[open] summary {
+  border-color: var(--accent-hover);
+  color: var(--ink);
+}
+
+.settings-fields {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--s2));
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  width: min(300px, calc(100vw - 24px));
+  padding: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 218, 151, 0.08), transparent 60%),
+    var(--panel);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55), inset 0 0 0 2px var(--bg);
+}
+
+.settings-fields label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: var(--s1);
+}
+
+.settings-fields .label-hint {
+  font-size: 0.8rem;
+}
+
+
 /* Results & Recovery Surfaces */
 #results-panel {
   max-width: var(--container-max-width);
@@ -1358,6 +1478,13 @@ dialog::backdrop {
        fixed at the viewport bottom-right; at max scroll the shell covered the
        card's faction row (measured -26.7px clearance at 360). 96px leaves the
        card ≥8px above the shell at 360/375 with normal and reduced motion. */
+    padding-bottom: calc(var(--s6) * 4);
+  }
+
+  /* Same fixed-shell clearance for the game dock: the discussion consent and
+     voice controls sit at the page bottom at max scroll and must not be
+     covered by the audio shell. */
+  .layout {
     padding-bottom: calc(var(--s6) * 4);
   }
 }

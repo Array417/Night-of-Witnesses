@@ -87,6 +87,8 @@ export interface CanonicalGameState {
   butlerPeeked: boolean;
   detectiveUsed: boolean;
   detectiveTargetLocation: PlayerLocationId | null;
+  discussionConsents: string[];
+  discussionDeadlineAt: number | null;
 
   // Voting & resolution
   votes: Record<string, PlayerLocationId>;
@@ -125,6 +127,8 @@ export interface PlayerProjection {
   ownBallot?: PlayerLocationId;
   butlerPeek?: Card[];
   detectiveSentLocation?: PlayerLocationId | null;
+  discussionConsents: string[];
+  discussionDeadlineAt: number | null;
 
   // Only populated in resolution and game_over
   result?: GameResult;

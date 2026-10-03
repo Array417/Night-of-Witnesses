@@ -9,9 +9,25 @@ import {
   type PlayerLocationId,
 } from '../../shared/rules.ts';
 import { audioManager } from '../audio/manager.ts';
+import { renderVoicePanel } from '../audio/voice-controls.ts';
+import { renderDiscussionConsent } from './discussion-consent.ts';
 
 /** Shown when a phase action cannot be dispatched (offline or one already in flight). */
 const DISPATCH_FAILED = '操作失敗：連線中斷或已有動作正在處理，請稍後再試。';
+
+/** Teardown for the active dock (countdown interval / voice subscription). */
+let activePhaseCleanup: (() => void) | null = null;
+
+/** Disposes the active dock's timers and subscriptions; main calls this on every rerender. */
+export function disposePhaseActions(): void {
+  activePhaseCleanup?.();
+  activePhaseCleanup = null;
+}
+
+function ownPhaseCleanup(cleanup: () => void): void {
+  activePhaseCleanup?.();
+  activePhaseCleanup = cleanup;
+}
 
 export function renderDiscussionAction(
   container: HTMLElement,
@@ -118,28 +134,15 @@ export function renderDiscussionAction(
     container.appendChild(detectiveBox);
   }
 
-  // Host advance button
-  if (projection.isHost) {
-    const hostAdvanceBtn = el(
-      'button',
-      {
-        id: 'btn-advance-vote',
-        type: 'button',
-        class: 'primary-button btn-block',
-        style: 'margin-top: 16px;',
-      },
-      ['討論結束，進入指認投票階段']
-    );
-    hostAdvanceBtn.addEventListener('click', () => {
-      audioManager.playCue('phase_change');
-      if (!client.dispatchAction({ type: 'advance_to_vote' })) {
-        showInlineAlert(container, DISPATCH_FAILED);
-      }
-    });
-    container.appendChild(hostAdvanceBtn);
-  } else {
-    container.appendChild(el('p', { class: 'label-hint' }, ['等待房主結束討論並開啟投票...']));
-  }
+  // All-player consent (host included) plus the discussion-phase voice panel.
+  // Both own intervals/subscriptions that main disposes on every rerender.
+  const cleanups: Array<() => void> = [
+    renderDiscussionConsent(container, projection, client),
+    renderVoicePanel(container, client.voice),
+  ];
+  ownPhaseCleanup(() => {
+    for (const cleanup of cleanups) cleanup();
+  });
 }
 
 export function renderVotingAction(

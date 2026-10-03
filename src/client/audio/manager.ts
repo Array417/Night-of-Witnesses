@@ -11,6 +11,8 @@ import {
   ProceduralAmbience,
   type AudioCueName,
 } from './cues.ts';
+import { mountVoiceSettings } from './voice-controls.ts';
+import type { VoiceController } from '../voice/controller.ts';
 
 export interface AudioManagerOptions {
   createContext?: () => AudioContext;
@@ -170,9 +172,14 @@ export class AudioManager {
 export const audioManager = new AudioManager();
 
 /**
- * Creates persistent UI audio controls shell outside #app
+ * Creates persistent UI audio controls shell outside #app.
+ * `voice` is the media layer's structural controller (client.voice) when available;
+ * the shell persists for the page lifetime so it subscribes to it exactly once.
  */
-export function mountAudioControls(container = document.body): HTMLElement {
+export function mountAudioControls(
+  container = document.body,
+  voice: VoiceController | null = null
+): HTMLElement {
   const existing = document.getElementById('audio-controls-shell');
   if (existing) return existing;
 
@@ -220,6 +227,9 @@ export function mountAudioControls(container = document.body): HTMLElement {
     ambienceBtn.setAttribute('aria-pressed', String(updated.ambienceEnabled));
     ambienceBtn.innerHTML = updated.ambienceEnabled ? '🕯️ 環境音' : '🕯️ 靜止';
   });
+
+  // Persistent voice/sound settings disclosure (game volume, received voice, mic gain).
+  mountVoiceSettings(shell, voice, volumeSlider);
 
   // Global user gesture unlock listener
   const unlockHandler = () => {

@@ -165,10 +165,11 @@ y             = 50 + Math.sin(radians) * 38   // % of table height
 ### Table Action Dock (`.table-action-dock`)
 
 A persistent strip inside the table panel, below the oval, that hosts:
-- Discussion phase: butler/detective ability buttons, host-advance button.
+- Discussion phase: butler/detective ability buttons, the all-player consent panel (`.discussion-consent`), and the voice panel (`.voice-panel`).
 - Voting phase: vote form (relocated from the deleted left panel).
 - Draft phase: claim status indicator only (claim dialog is modal).
 - All controls retain their existing element IDs and permission rules.
+- Every connected player — host included — sees the same consent control; there is no host advance bypass.
 
 ---
 
@@ -276,6 +277,30 @@ Every reusable primitive used by two or more screens is defined with structure, 
 - **Reduced motion**: Faces render immediately with `transition-duration: 0.01ms` and no transform animation, matching `result.assignedRoles` and `result.guestRoomCard`.
 - **Results Layout (`.results-layout`)**: Summary (winner banner, Boiler Room, identity table, Guest Room info, ballots, rematch/waiting) on the left and the canonical reveal table on the right at `≥1024px`, stacked to one column below. Result cards render outside the seat ring so the table centre stays clear for the Guest Room card.
 
+### 17. Discussion Consent Panel (`.discussion-consent`)
+- **Structure**: `panel-2` surface inside the table action dock with heading 「討論結束同意」, a rule hint, a `role="status"` progress line, an optional countdown line, and the single `#btn-advance-vote` consent control.
+- **Rule copy**: All connected players (host included) consent to `advance_to_vote`; consent is per-player and irreversible. Strictly more than half of connected players consenting starts one 15-second server deadline; unanimous consent advances immediately; the deadline forces the transition server-side.
+- **States**:
+  - Available: gilded primary button 「同意結束討論，進入投票階段」; progress `已同意：N / M（名單）`.
+  - Consented: button disabled and labelled `已同意結束討論（N / M），等待其他玩家…`; the player cannot re-submit or withdraw.
+  - Countdown: `discussionDeadlineAt` renders `剩餘 N 秒，時間到將自動進入投票階段。` with tabular numerals; `is-urgent` switches the text to `--danger` at ≤5 seconds. The browser never sends a forced advance.
+  - Deadline elapsed: `時間已到，正等待伺服器進入投票階段…` until the server projection moves the room to voting.
+- **Denominator**: Connected players, host included; disconnected players leave both numerator and denominator.
+- **Cleanup**: The 1-second interval is disposed on every view rerender/unmount; it never outlives the dock.
+
+### 18. Voice Panel & Persistent Voice Settings (`.voice-panel`, `#settings-panel`)
+- **Discussion voice panel (`.voice-panel`)**: dock-scoped status line plus `#btn-toggle-mic` and `#btn-resume-voice`.
+  - Microphone is off by default; the toggle renders `開啟麥克風` → `關閉麥克風` with `aria-pressed`.
+  - While a permission request is pending the control stays operable as `取消麥克風要求` (turning off during the request is supported).
+  - Unavailable states (`available: false`, denied, insecure context, unsupported) render readable text and a disabled toggle; the game continues unchanged.
+  - `playbackBlocked` reveals the listen-only `#btn-resume-voice` control, which resumes received audio without opening the microphone.
+  - State changes arrive through the voice controller subscription; the subscription is disposed with the dock.
+- **Persistent settings (`#settings-panel`)**: native `<details>`/`<summary>` disclosure inside `#audio-controls-shell`, rendered outside `#app` so it survives view rerenders. Contains labelled range inputs:
+  - `#settings-game-volume` — game sound master volume (`0..1`), two-way sync with `#audio-volume-slider`.
+  - `#settings-voice-output` — received voice volume (`0..1`).
+  - `#settings-mic-gain` — microphone gain (`0..2`).
+- **Persistence**: Voice volume and mic gain are persisted by the voice controller (separate from `night-of-witnesses.audio.v1`). The settings section subscribes to the controller once at mount and never leaks a subscriber.
+
 ---
 
 ## 6. Motion & Interaction
@@ -316,7 +341,9 @@ All card lift, rotation, and nonessential transitions are suppressed while retai
   - Master Volume Slider (`0.0` to `1.0`, default `0.4`).
   - Mute Toggle (sets effective gain to zero, maintains preference).
   - Tavern Ambience Toggle (starts subtle procedural tavern soundscape after room entry).
-  - Preferences persisted in `localStorage` under `night-of-witnesses.audio.v1`.
+  - Settings Disclosure (`#settings-panel`, native `<details>`): labelled range controls for game sound volume, received voice volume (`0.0`–`1.0`), and microphone gain (`0.0`–`2.0`).
+  - Preferences persisted in `localStorage` under `night-of-witnesses.audio.v1`; voice volume and microphone gain are persisted separately by the voice controller.
+  - Microphone defaults to off, is only offered during the discussion phase, and remains operable while a permission request is pending; denied/insecure/unsupported states show readable text without breaking the game. When autoplay blocks received voice, an explicit listen control resumes playback without opening the microphone.
 - **Sound Mapping**: Phase change, own turn, card select/pass, ready/start, abilities, vote, result, error, connection loss/recovery.
 - **Privacy Rule**: Sound effects are strictly redundant with visible state and never reveal secret roles.
 
@@ -371,7 +398,7 @@ The tavern atmosphere is crafted through multi-layered CSS background recipes wi
 - **Focus Indicators**: High-visibility double brass outline on `:focus-visible`.
 - **Information Redundancy**: All states use text labels and iconography in addition to color/border changes.
 - **Dialog Accessibility**: Proper modal trapping, ARIA roles, Escape key support, and focus return to triggering control.
-- **Live Regions**: Polite screen reader announcements for phase transitions and error states. Private roles are never read automatically.
+- **Live Regions**: Polite screen reader announcements for phase transitions and error states. Private roles are never read automatically. Consent progress uses a polite status region; the per-second countdown is deliberately not a live region (the transition itself is announced), and voice errors use `role="alert"`.
 
 ### Accepted Debt Table
 The accepted debt register is currently empty. Every required contract must be fully implemented without compromises.

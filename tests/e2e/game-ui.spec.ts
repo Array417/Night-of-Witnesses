@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu } from './draft-flow.ts';
+import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu, consentDiscussion } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
@@ -102,9 +102,9 @@ test.describe('complete Traditional Chinese lobby and gameplay interface', () =>
     // Take screenshot of mobile 360px discussion
     await pBob.screenshot({ path: path.join(evidenceDir, 'task-10-mobile-360-discussion.png'), fullPage: true });
 
-    // Alice (host) advances discussion to voting from the dock
+    // Every player (host included) consents from the dock; unanimous consent advances.
     await openGameMenu(pAlice);
-    await pAlice.locator('.table-action-dock #btn-advance-vote').click();
+    await consentDiscussion([pAlice, pBob, pCharlie]);
 
     // All enter voting phase; the dock form is reachable without opening the drawer.
     await expect(pAlice.locator('.table-action-dock h2')).toHaveText('投票指認階段');

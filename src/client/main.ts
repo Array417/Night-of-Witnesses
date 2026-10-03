@@ -23,6 +23,8 @@ let lastPhase: string | null = null;
 let lastVersion: number = -1;
 
 function renderCurrentView(app: HTMLElement, client: GameClient): void {
+  // The dock's countdown interval and voice subscription never outlive their view.
+  disposePhaseActions();
   const projection = client.getProjection();
 
   if (!projection) {
@@ -86,6 +88,7 @@ function renderCurrentView(app: HTMLElement, client: GameClient): void {
 
 import { renderShowcase } from './showcase/index.ts';
 import { audioManager, mountAudioControls } from './audio/manager.ts';
+import { disposePhaseActions } from './views/game-phases.ts';
 
 function updateConnectionBadge(status: string): void {
   let badge = document.getElementById('connection-status-badge');
@@ -120,7 +123,6 @@ function initApp(): void {
   }
 
   // Mount persistent audio controls and connection badge outside #app
-  mountAudioControls();
   updateConnectionBadge('connecting');
 
   const client = new GameClient({
@@ -149,6 +151,7 @@ function initApp(): void {
       }
     },
     onRoomClosed: (reason) => {
+      disposePhaseActions();
       updateConnectionBadge('disconnected');
       audioManager.playCue('disconnect');
       audioManager.syncAmbience({ hasActiveRoom: false });
@@ -164,6 +167,9 @@ function initApp(): void {
       client,
     };
   }
+
+  // Voice/sound settings mount after the client (and its voice controller) exists.
+  mountAudioControls(document.body, client.voice);
 
   // Connect WebSocket
   client.connect();

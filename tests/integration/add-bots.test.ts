@@ -17,10 +17,10 @@ describe('local bot player helper', () => {
     manager = new RoomManager();
     server = createServerInstance({
       clientDistDir: path.resolve('dist/client'),
-      allowedOrigins: ['http://127.0.0.1:3000'],
+      allowedOrigins: ['http://localhost:3000'],
     }).server;
     closeWs = attachWebSocketServer(server, manager, {
-      allowedOrigins: ['http://127.0.0.1:3000'],
+      allowedOrigins: ['http://localhost:3000'],
       pingIntervalMs: 100,
     }).close;
 
@@ -39,7 +39,7 @@ describe('local bot player helper', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  test('joins three named bots and keeps all seats connected', async () => {
+  test('joins three named bots with the Docker default origin when ORIGIN is unset', async () => {
     const { roomCode } = manager.createRoom('Human');
 
     const botProcess = spawn(
@@ -50,7 +50,7 @@ describe('local bot player helper', () => {
         env: {
           ...process.env,
           WS_URL: wsUrl,
-          ORIGIN: 'http://127.0.0.1:3000',
+          ORIGIN: undefined,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       }

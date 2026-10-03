@@ -1,6 +1,10 @@
 import type http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { clientMessageSchema, type ServerMessage } from '../shared/protocol.ts';
+import {
+  clientMessageSchema,
+  type IceServerConfig,
+  type ServerMessage,
+} from '../shared/protocol.ts';
 import type { RoomManager } from './rooms.ts';
 import { RoomError } from './rooms.ts';
 import { projectForViewer } from './project.ts';
@@ -9,7 +13,13 @@ export interface WebSocketOptions {
   allowedOrigins?: string[];
   pingIntervalMs?: number;
   handshakeTimeoutMs?: number;
+  iceServers?: IceServerConfig[];
+  discussionCheckIntervalMs?: number;
 }
+
+const GAME_RATE_LIMIT = 20;
+const RTC_RATE_LIMIT = 120;
+const RATE_WINDOW_MS = 10_000;
 
 interface SocketContext {
   ws: WebSocket;
@@ -18,6 +28,7 @@ interface SocketContext {
   playerId?: string;
   seatToken?: string;
   messageTimestamps: number[];
+  rtcMessageTimestamps: number[];
   handshakeTimer?: NodeJS.Timeout;
 }
 
@@ -32,6 +43,8 @@ export function attachWebSocketServer(
   const allowedOrigins = options.allowedOrigins;
   const pingIntervalMs = options.pingIntervalMs ?? 20_000;
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? 10_000;
+  const iceServers = options.iceServers ?? [];
+  const discussionCheckIntervalMs = options.discussionCheckIntervalMs ?? 250;
 
   const wss = new WebSocketServer({
     noServer: true,
@@ -45,6 +58,15 @@ export function attachWebSocketServer(
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     }
+  }
+
+  function sendWelcome(
+    ws: WebSocket,
+    roomCode: string,
+    seatToken: string,
+    playerId: string
+  ): void {
+    sendServerMessage(ws, { type: 'welcome', roomCode, seatToken, playerId, iceServers });
   }
 
   function broadcastRoomProjections(roomCode: string): void {
@@ -94,6 +116,7 @@ export function attachWebSocketServer(
       ws,
       isAlive: true,
       messageTimestamps: [],
+      rtcMessageTimestamps: [],
     };
     sockets.set(ws, ctx);
 
@@ -120,20 +143,7 @@ export function attachWebSocketServer(
         return;
       }
 
-      // Rate limit check: 20 messages per 10 seconds
-      const now = Date.now();
-      ctx.messageTimestamps = ctx.messageTimestamps.filter((t) => now - t < 10_000);
-      if (ctx.messageTimestamps.length >= 20) {
-        sendServerMessage(ws, {
-          type: 'error',
-          code: 'RATE_LIMITED',
-          message: '操作過於頻繁，請稍候再試',
-        });
-        return;
-      }
-      ctx.messageTimestamps.push(now);
-
-      // JSON parse
+      // JSON parse (before rate limiting so rtc/game buckets stay separate)
       let parsedJson: unknown;
       try {
         parsedJson = JSON.parse(data.toString());
@@ -145,6 +155,31 @@ export function attachWebSocketServer(
         });
         return;
       }
+
+      const now = Date.now();
+      const isRtc = (
+        typeof parsedJson === 'object' &&
+        parsedJson !== null &&
+        (parsedJson as Record<string, unknown>).type === 'rtc_signal'
+      );
+      // Separate rtc bucket (120/10s) so signaling never exhausts the game quota.
+      const bucket = isRtc ? ctx.rtcMessageTimestamps : ctx.messageTimestamps;
+      const limit = isRtc ? RTC_RATE_LIMIT : GAME_RATE_LIMIT;
+      const fresh = bucket.filter((t) => now - t < RATE_WINDOW_MS);
+      if (isRtc) {
+        ctx.rtcMessageTimestamps = fresh;
+      } else {
+        ctx.messageTimestamps = fresh;
+      }
+      if (fresh.length >= limit) {
+        sendServerMessage(ws, {
+          type: 'error',
+          code: 'RATE_LIMITED',
+          message: '操作過於頻繁，請稍候再試',
+        });
+        return;
+      }
+      fresh.push(now);
 
       // Zod schema parse
       const parseResult = clientMessageSchema.safeParse(parsedJson);
@@ -177,12 +212,7 @@ export function attachWebSocketServer(
           ctx.playerId = res.playerId;
           ctx.seatToken = res.seatToken;
 
-          sendServerMessage(ws, {
-            type: 'welcome',
-            roomCode: res.roomCode,
-            seatToken: res.seatToken,
-            playerId: res.playerId,
-          });
+          sendWelcome(ws, res.roomCode, res.seatToken, res.playerId);
           sendServerMessage(ws, {
             type: 'projection',
             projection: res.projection,
@@ -206,12 +236,7 @@ export function attachWebSocketServer(
           ctx.playerId = res.playerId;
           ctx.seatToken = res.seatToken;
 
-          sendServerMessage(ws, {
-            type: 'welcome',
-            roomCode: res.roomCode,
-            seatToken: res.seatToken,
-            playerId: res.playerId,
-          });
+          sendWelcome(ws, res.roomCode, res.seatToken, res.playerId);
           broadcastRoomProjections(res.roomCode);
         } catch (err: unknown) {
           const code = err instanceof RoomError ? err.code : 'JOIN_FAILED';
@@ -232,12 +257,7 @@ export function attachWebSocketServer(
           ctx.playerId = res.playerId;
           ctx.seatToken = res.seatToken;
 
-          sendServerMessage(ws, {
-            type: 'welcome',
-            roomCode: res.roomCode,
-            seatToken: res.seatToken,
-            playerId: res.playerId,
-          });
+          sendWelcome(ws, res.roomCode, res.seatToken, res.playerId);
           broadcastRoomProjections(res.roomCode);
         } catch (err: unknown) {
           const code = err instanceof RoomError ? err.code : 'REJOIN_FAILED';
@@ -254,6 +274,47 @@ export function attachWebSocketServer(
           code: 'UNAUTHENTICATED',
           message: '尚未加入房間',
         });
+        return;
+      }
+
+      // Authenticated audio signaling: targeted relay only, no state version change.
+      if (msg.type === 'rtc_signal') {
+        const room = manager.getRoom(ctx.roomCode);
+        const senderId = ctx.playerId;
+        const senderSeat = room?.seats.get(senderId);
+        if (!room || !senderSeat || !senderSeat.connected) {
+          sendServerMessage(ws, { type: 'error', code: 'UNAUTHENTICATED', message: '尚未加入房間' });
+          return;
+        }
+        if (room.state.phase !== 'discussion') {
+          sendServerMessage(ws, { type: 'error', code: 'INVALID_PHASE', message: '語音信令僅能在討論階段使用' });
+          return;
+        }
+        if (msg.targetPlayerId === senderId) {
+          sendServerMessage(ws, { type: 'error', code: 'INVALID_TARGET', message: '無效的信令目標' });
+          return;
+        }
+        const targetSeat = room.seats.get(msg.targetPlayerId);
+        const targetPlayer = room.state.players.find((p) => p.playerId === msg.targetPlayerId);
+        if (!targetSeat || !targetSeat.connected || !targetPlayer || !targetPlayer.connected) {
+          sendServerMessage(ws, { type: 'error', code: 'INVALID_TARGET', message: '目標玩家不在房間或已離線' });
+          return;
+        }
+        // Targeted relay only (never broadcast, never log SDP payload).
+        for (const peer of sockets.values()) {
+          if (
+            peer.roomCode === ctx.roomCode &&
+            peer.playerId === msg.targetPlayerId &&
+            peer.ws.readyState === WebSocket.OPEN
+          ) {
+            sendServerMessage(peer.ws, {
+              type: 'rtc_signal',
+              fromPlayerId: senderId,
+              kind: msg.kind,
+              payload: msg.payload,
+            });
+          }
+        }
         return;
       }
 
@@ -298,8 +359,22 @@ export function attachWebSocketServer(
     }
   }, pingIntervalMs);
 
+  // Discussion deadline sweep: force voting without client messages.
+  // Broadcasts only rooms whose deadline actually expired (changed projections).
+  const discussionInterval = setInterval(() => {
+    try {
+      const changed = manager.checkAllDiscussionDeadlines();
+      for (const roomCode of changed) {
+        broadcastRoomProjections(roomCode);
+      }
+    } catch {
+      // Never crash the timer loop on a room error.
+    }
+  }, discussionCheckIntervalMs);
+
   async function close(): Promise<void> {
     clearInterval(pingInterval);
+    clearInterval(discussionInterval);
     for (const [ws, ctx] of sockets.entries()) {
       if (ctx.handshakeTimer) {
         clearTimeout(ctx.handshakeTimer);

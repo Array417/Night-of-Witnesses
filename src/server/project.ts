@@ -109,6 +109,8 @@ export function projectForViewer(
     ownBallot,
     butlerPeek,
     detectiveSentLocation,
+    discussionConsents: state.discussionConsents ?? [],
+    discussionDeadlineAt: state.discussionDeadlineAt ?? null,
     result,
   };
 }

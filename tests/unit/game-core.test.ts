@@ -126,13 +126,15 @@ describe('pure authoritative core reducer (L1-L6)', () => {
       assert.equal(state.phase, 'discussion');
       assert.ok(state.guestRoomCard !== null);
 
-      // Advance to vote
-      state = reduceGame(state, {
-        type: 'advance_to_vote',
-        actionId: '00000000-0000-4000-8000-000000000010',
-        baseVersion: state.version,
-        playerId: 'p1',
-      });
+      // Advance to vote requires unanimous consent of all connected players
+      for (const [i, pid] of ['p1', 'p2', 'p3'].entries()) {
+        state = reduceGame(state, {
+          type: 'advance_to_vote',
+          actionId: `00000000-0000-4000-8000-00000000001${i}`,
+          baseVersion: state.version,
+          playerId: pid,
+        });
+      }
 
       assert.equal(state.phase, 'voting');
 
@@ -274,6 +276,14 @@ describe('pure authoritative core reducer (L1-L6)', () => {
       baseVersion: state.version,
       playerId: 'p1',
     });
+    for (const [i, pid] of ['p2', 'p3', 'p4'].entries()) {
+      state = reduceGame(state, {
+        type: 'advance_to_vote',
+        actionId: `20000000-0000-4000-8000-00000000004${i + 1}`,
+        baseVersion: state.version,
+        playerId: pid,
+      });
+    }
 
     const loc1 = state.players.find((p) => p.playerId === 'p1')!.locationId!;
     const loc2 = state.players.find((p) => p.playerId === 'p2')!.locationId!;
@@ -458,12 +468,14 @@ describe('pure authoritative core reducer (L1-L6)', () => {
         });
       }
 
-      state = reduceGame(state, {
-        type: 'advance_to_vote',
-        actionId: `40000000-0000-4000-8000-0000000004${players}0`,
-        baseVersion: state.version,
-        playerId: 'p1',
-      });
+      for (let i = 1; i <= players; i++) {
+        state = reduceGame(state, {
+          type: 'advance_to_vote',
+          actionId: `40000000-0000-4000-8000-0000000004${players}${i}`,
+          baseVersion: state.version,
+          playerId: `p${i}`,
+        });
+      }
 
       const firstLoc = state.players[0].locationId!;
       for (let i = 1; i <= players; i++) {

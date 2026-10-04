@@ -126,6 +126,78 @@ curl.exe -fsS http://localhost:3000/healthz
 docker stop now-game
 ```
 
+### 5. macOS 無 GUI 一鍵部署（Colima + Docker Compose，對外 8213）
+
+macOS 冇原生 Docker Engine，唔想裝 Docker Desktop 可以用 **Colima**（純 CLI 的 Linux VM）：
+
+```bash
+# 只需安裝一次
+brew install colima docker docker-compose docker-buildx
+
+# 複製環境設定，並填入公網 ORIGIN（見下方）
+cp .env.example .env
+
+# 一鍵啟動（會自動啟動 Colima、建置、開服、等待健康檢查）
+./scripts/docker-boot.sh
+
+# 其他指令
+./scripts/docker-boot.sh --logs       # 追蹤日誌
+./scripts/docker-boot.sh --stop       # 停止服務
+./scripts/docker-boot.sh --forward     # 用 NAT-PMP 命令列建立路由器 port forwarding
+./scripts/docker-boot.sh --autostart  # Colima 登入自動啟動 + 安裝 port forwarding 續期服務
+```
+
+`docker-compose.yml` 將對外（主機）`8213` 對應到容器內部 `3000`，容器設 `restart: unless-stopped`。
+
+> **Port 與網址提醒**：只有 `80` (http) / `443` (https) 可以省略 port。用 8213 時網址一定要打 port，例如 `http://<公網IP或DDNS>:8213`。另外語音麥克風需要 **HTTPS**，用純 HTTP 玩時遠端語音會不可用，建議之後加反向代理（如 Caddy）走 443。
+
+### 路由器 Port Forwarding 設定（外部 → 本機）
+
+到路由器管理頁的 **Port Forwarding / Virtual Server（虛擬伺服器）** 新增一筆：
+
+| 欄位 | 值 |
+| :--- | :--- |
+| 名稱 / Name | `NightOfWitnesses` |
+| 通訊協定 / Protocol | `TCP`（WebSocket 亦走 TCP；如需最保險可選 `TCP+UDP`） |
+| 外部端口 / External Port | `8213` |
+| 內部端口 / Internal Port | `8213` |
+| 內部 IP / Internal IP | 這台 Mac 的區網 IP（`ipconfig getifaddr en0`） |
+| 啟用 / Enable | 是 |
+
+設定後，外部網址為 `http://<公網IP或DDNS>:8213`。請同時把該網址填入 `.env` 的 `ORIGIN`，否則 WebSocket 會被來源檢查（CSWSH）擋下：
+
+```dotenv
+ORIGIN=http://1.2.3.4:8213
+# 或用 DDNS 網域：
+# ORIGIN=http://now.example.com:8213
+```
+
+### 無 UI 方法：用命令列 NAT-PMP 開 Port Forwarding（不在家都做到）
+
+若路由器支援 **NAT-PMP**（多數家用路由器預設開啟），唔使登入管理頁，可以由呢部 Mac 用命令列要求路由器開放端口：
+
+```bash
+# 安裝一次
+brew install libnatpmp
+
+# 立即建立/更新轉發（對外 8213 -> 本機 8213 TCP，續期 7 日）
+./scripts/docker-boot.sh --forward
+```
+
+或直接執行（可用 `-g` 指定閘道）：
+
+```bash
+natpmpc -g 192.168.0.1 -a 8213 8213 tcp 604800
+```
+
+> `docker-boot.sh --autostart` 會額外安裝一個每 30 分鐘自動續期的 LaunchAgent，
+> 令路由器重開或 Mac 重開後，短時間內自動重新建立轉發。
+> 日誌位於 `~/Library/Logs/nightofwitnesses.natpmp.log`。
+
+**注意**：若路由器停用 UPnP / NAT-PMP，命令列方法就無法使用，仍須登入管理頁設定。
+另外若 Mac 裝有 Tailscale，UPnP 的 SSDP 廣播可能被路由去 `utun` 而失敗，
+此時改用上面的 NAT-PMP（unicast，唔受影響）即可。
+
 ---
 
 ## 公開部署（Render Web Service）

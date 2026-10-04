@@ -1,0 +1,23 @@
+services:
+  now-game:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: night-of-witnesses:latest
+    container_name: now-game
+    # 開機 / 當機後自動重啟（配合 colima 登入時自動啟動即等於開機自動開服）
+    restart: unless-stopped
+    ports:
+      # 對外(主機/路由器轉發) 8213 -> 容器內部 3000
+      # 綁 0.0.0.0 先可以由路由器 port forwarding 轉入嚟
+      - "0.0.0.0:8213:3000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      # 瀏覽器實際使用嘅來源網址（逗號分隔多個）。
+      # 互聯網玩家經路由器入嚟要改成你的公網 IP / DDNS 網域，例如：
+      #   ORIGIN=http://1.2.3.4:8213 或 http://now.example.com:8213
+      # 本地測試用 localhost 即可。於 .env 檔覆寫（見 .env.example）。
+      ORIGIN: "${ORIGIN:-http://localhost:8213,http://127.0.0.1:8213}"
+      # 語音 ICE 伺服器（選填），跨網路語音需要 STUN/TURN。
+      RTC_ICE_SERVERS_JSON: "${RTC_ICE_SERVERS_JSON:-[]}"

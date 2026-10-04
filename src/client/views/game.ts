@@ -17,6 +17,7 @@ import {
 import { renderGameTable } from './game-table.ts';
 import { createDraftCoordinator, renderDraftWaiting } from './game-draft.ts';
 import { renderDiscussionAction, renderVotingAction } from './game-phases.ts';
+import { roleArt } from './card-art.ts';
 
 const GAME_MENU_STATE_KEY = 'night-of-witnesses.game-menu-collapsed.v1';
 /** Kept in sync with the `max-width: 767px` drawer media query in styles.css. */
@@ -127,6 +128,7 @@ export function renderGame(
     [
       projection.ownRole
         ? el('div', { class: 'secret-role' }, [
+            roleArt(projection.ownRole.role, 'role-portrait'),
             el('h3', { style: 'color: var(--parchment-ink); margin-bottom: 4px; font-size: 1.25rem;' }, [
               `您的角色：${projection.ownRole.label}`,
             ]),

@@ -262,6 +262,12 @@ export class GameClient {
         // If reconnect token is invalid, clear storage
         if (msg.code === 'INVALID_TOKEN' || msg.code === 'ROOM_UNAVAILABLE') {
           clearSavedSeat();
+          if (this.lastActionType === 'leave') {
+            // A reconnect can confirm the seat was removed even when the
+            // original room_closed acknowledgement did not reach this socket.
+            this.handleServerMessage({ type: 'room_closed', reason: '離房後座位已撤銷' }, raw);
+            return;
+          }
         }
         if (
           msg.code === 'STALE_VERSION' &&
@@ -279,6 +285,7 @@ export class GameClient {
         break;
       }
       case 'room_closed': {
+        this.lastActionType = null;
         clearSavedSeat();
         setRoomCodeInUrl(null);
         this.currentProjection = null;
@@ -296,6 +303,7 @@ export class GameClient {
       return false;
     }
     this.inFlightAction = true;
+    this.lastActionType = 'create_room';
     this.sendRaw({
       type: 'create_room',
       actionId: randomUUID(),
@@ -309,6 +317,7 @@ export class GameClient {
       return false;
     }
     this.inFlightAction = true;
+    this.lastActionType = 'join_room';
     this.sendRaw({
       type: 'join_room',
       actionId: randomUUID(),

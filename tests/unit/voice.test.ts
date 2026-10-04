@@ -534,6 +534,58 @@ describe('voice ICE ordering and limits', () => {
     await h.controller.resumePlayback();
     assert.equal(h.controller.getState().playbackBlocked, false);
   });
+
+  test('opening the microphone also resumes blocked receive-only playback', async () => {
+    const h = makeHarness();
+    h.controller.sync(discussionInput());
+    await flush();
+    h.conns[0].trackHandler?.(new FakeStream());
+    h.sinks[0].playMode = 'blocked';
+    h.conns[0].trackHandler?.(new FakeStream());
+    await flush();
+    assert.equal(h.controller.getState().playbackBlocked, true);
+    h.sinks[0].playMode = 'ok';
+    await h.controller.setMicEnabled(true);
+    assert.equal(h.controller.getState().playbackBlocked, false);
+    assert.equal(h.controller.getState().micEnabled, true);
+  });
+
+  test('an obsolete track replacement cannot stop a newer microphone', async () => {
+    const h = makeHarness();
+    h.controller.sync(discussionInput());
+    await flush();
+    let release!: () => void;
+    let first = true;
+    const replace = h.conns[0].replaceAudioTrack.bind(h.conns[0]);
+    h.conns[0].replaceAudioTrack = async track => {
+      await replace(track);
+      if (track && first) {
+        first = false;
+        await new Promise<void>(resolve => { release = resolve; });
+      }
+    };
+    const oldEnable = h.controller.setMicEnabled(true);
+    await flush();
+    assert.equal(h.controller.getState().micPending, true);
+    await h.controller.setMicEnabled(false);
+    await h.controller.setMicEnabled(true);
+    const currentTrack = h.conns[0].sender.track as FakeTrack;
+    release();
+    await oldEnable;
+    assert.equal(h.controller.getState().micEnabled, true);
+    assert.equal(currentTrack.stopped, false);
+    assert.equal(h.conns[0].sender.track, currentTrack);
+  });
+
+  test('a rejected sender track is reported instead of falsely enabling the mic', async () => {
+    const h = makeHarness();
+    h.controller.sync(discussionInput());
+    await flush();
+    h.conns[0].replaceAudioTrack = async track => { if (track) throw new Error('sender rejected'); };
+    await h.controller.setMicEnabled(true);
+    assert.equal(h.controller.getState().micEnabled, false);
+    assert.match(h.controller.getState().error ?? '', /sender rejected/);
+  });
 });
 
 describe('voice volume clamping and prefs isolation', () => {

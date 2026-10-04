@@ -807,210 +807,39 @@ test.describe('CJK heading line integrity', () => {
   });
 });
 
-interface ShellClearanceProbe {
-  readonly project: string;
-  readonly variant: string;
-  readonly width: number;
-  readonly scrollY: number;
-  readonly maxScroll: number;
-  readonly atMaxScroll: boolean;
-  readonly documentHeight: number;
-  readonly card: { readonly top: number; readonly bottom: number; readonly left: number; readonly right: number };
-  readonly faction: { readonly top: number; readonly bottom: number; readonly text: string } | null;
-  readonly shell: { readonly top: number; readonly bottom: number; readonly left: number; readonly right: number };
-  readonly cardClearance: number;
-  readonly factionClearance: number | null;
-  readonly cardHitTag: string | null;
-  readonly cardHitInside: boolean;
-  readonly factionHitTag: string | null;
-  readonly factionHitInside: boolean;
-  readonly shellLabel: string;
-  readonly muteHittable: boolean;
-  readonly pageOverflow: boolean;
-}
-
-/**
- * Waits until the reveal flip has settled (or is overridden under reduced motion)
- * before any geometry is read, so mid-transition projection cannot flake the
- * `elementFromPoint` hit tests on the bottom card.
- */
-async function settleRevealFlip(page: Page): Promise<void> {
-  await expect(page.locator('.results-reveal')).toHaveClass(/is-revealed/);
-  await expect
-    .poll(async () =>
-      page.evaluate(() => {
-        const cards = Array.from(
-          document.querySelectorAll<HTMLElement>('.results-reveal .result-card')
-        );
-        if (cards.length === 0) return false;
-        const bottom = cards.reduce((lowest, card) =>
-          card.getBoundingClientRect().bottom > lowest.getBoundingClientRect().bottom ? card : lowest
-        );
-        const transform = getComputedStyle(bottom).transform;
-        if (transform === 'none') return true;
-        try {
-          return Math.abs(new DOMMatrix(transform).m11) > 0.99;
-        } catch {
-          return true;
-        }
-      })
-    )
-    .toBe(true);
-}
-
-/**
- * At maximum scroll, reads the bottom-most result card (viewer card, which hangs
- * away from the ring centre) against the fixed audio shell: card/faction-row
- * clearance above the shell and real hit-testing at both points. The shell's own
- * mute button is probed the same way to prove the shell is still usable on top.
- */
-async function probeShellClearance(
-  page: Page,
-  context: { variant: string; width: number; project: string }
-): Promise<ShellClearanceProbe> {
-  return page.evaluate(
-    ({ variant, width, project }) => {
-      const shell = document.getElementById('audio-controls-shell');
-      const cards = Array.from(
-        document.querySelectorAll<HTMLElement>('.results-reveal .result-card')
-      );
-      if (!shell) throw new Error('audio controls shell missing');
-      if (cards.length === 0) throw new Error('result cards missing');
-      const bottomCard = cards.reduce((lowest, card) =>
-        card.getBoundingClientRect().bottom > lowest.getBoundingClientRect().bottom ? card : lowest
-      );
-      const shellRect = shell.getBoundingClientRect();
-      const cardRect = bottomCard.getBoundingClientRect();
-      const faction = bottomCard.querySelector<HTMLElement>('.card-action');
-      const factionRect = faction?.getBoundingClientRect() ?? null;
-      const cardHit = document.elementFromPoint(
-        cardRect.left + cardRect.width / 2,
-        cardRect.bottom - 4
-      );
-      const factionHit = factionRect
-        ? document.elementFromPoint(
-            factionRect.left + factionRect.width / 2,
-            factionRect.top + factionRect.height / 2
-          )
-        : null;
-      const muteButton = document.getElementById('btn-audio-mute');
-      const muteRect = muteButton?.getBoundingClientRect() ?? null;
-      const muteHit = muteRect
-        ? document.elementFromPoint(muteRect.left + muteRect.width / 2, muteRect.top + muteRect.height / 2)
-        : null;
-      const doc = document.documentElement;
-      return {
-        project,
-        variant,
-        width,
-        scrollY: window.scrollY,
-        maxScroll: doc.scrollHeight - doc.clientHeight,
-        atMaxScroll: Math.abs(window.scrollY - (doc.scrollHeight - doc.clientHeight)) <= 1,
-        documentHeight: doc.scrollHeight,
-        card: { top: cardRect.top, bottom: cardRect.bottom, left: cardRect.left, right: cardRect.right },
-        faction:
-          faction && factionRect
-            ? { top: factionRect.top, bottom: factionRect.bottom, text: faction.textContent?.trim() ?? '' }
-            : null,
-        shell: { top: shellRect.top, bottom: shellRect.bottom, left: shellRect.left, right: shellRect.right },
-        cardClearance: shellRect.top - cardRect.bottom,
-        factionClearance: factionRect ? shellRect.top - factionRect.bottom : null,
-        cardHitTag: cardHit ? cardHit.tagName.toLowerCase() : null,
-        cardHitInside: cardHit !== null && bottomCard.contains(cardHit),
-        factionHitTag: factionHit ? factionHit.tagName.toLowerCase() : null,
-        factionHitInside: factionHit !== null && bottomCard.contains(factionHit),
-        shellLabel: shell.getAttribute('aria-label') ?? '',
-        muteHittable: muteHit !== null && muteButton !== null && muteButton.contains(muteHit),
-        pageOverflow: doc.scrollWidth > doc.clientWidth,
-      };
-    },
-    context
-  );
-}
-
-test.describe('audio shell scroll clearance', () => {
-  test('bottom result card clears the fixed audio shell at max scroll (375/360, normal and reduced motion)', async ({
-    browser,
-  }) => {
-    test.setTimeout(90_000);
-    const errors: string[] = [];
-    const evidenceDir = path.resolve(process.cwd(), '.omo/evidence/final-f3-visual-qa');
-    fs.mkdirSync(evidenceDir, { recursive: true });
-    const project = test.info().project.name;
-    const variants = ['coarse', 'reduced-motion'] as const;
-    const { pages, contexts } = await startRoom(browser, ['ShellCoarse', 'ShellFine', 'ShellReduced'], {
+test.describe('results with menu audio controls', () => {
+  test('result cards remain readable and Menu works at 375/360 with reduced motion', async ({ browser }) => {
+    test.setTimeout(90000);
+    const { pages, contexts } = await startRoom(browser, ['MenuCoarse', 'MenuFine', 'MenuReduced'], {
       viewport: { width: 375, height: 812 },
-      contextOptions: (index) =>
-        index === 0 ? { hasTouch: true } : index === 2 ? { reducedMotion: 'reduce' } : {},
-      onPage: async (page) => {
-        page.on('pageerror', (error) => errors.push(error.message));
-      },
+      contextOptions: index => index === 0 ? { hasTouch: true } : index === 2 ? { reducedMotion: 'reduce' } : {},
     });
-    const metrics: Record<string, Record<string, ShellClearanceProbe>> = {};
     try {
       await playToResults(pages);
-      for (let index = 0; index < pages.length; index += 1) {
-        const page = pages[index];
-        const variant = variants[index];
-        if (!variant) continue;
-        const perWidth: Record<string, ShellClearanceProbe> = {};
-        for (const [width, height] of [
-          [375, 812],
-          [360, 800],
-        ] as const) {
-          await page.setViewportSize({ width, height });
-          await settleRevealFlip(page);
-          await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-          const probe = await probeShellClearance(page, { variant, width, project });
-          perWidth[String(width)] = probe;
-          await page.screenshot({
-            path: path.join(evidenceDir, `f3s-shell-clearance-${variant}-${width}-${project}.png`),
-          });
+      for (const page of pages) {
+        for (const width of [375, 360]) {
+          await page.setViewportSize({ width, height: 812 });
+          await expect(page.locator('.results-reveal')).toHaveClass(/is-revealed/);
+          await expect(page.locator('#app-menu #audio-controls-shell')).toHaveCount(1);
+          await expect(page.locator('#btn-audio-mute')).toBeHidden();
+          const faction = page.locator('.results-reveal .result-card .card-action').first();
+          await faction.scrollIntoViewIfNeeded();
+          await expect(faction).not.toBeEmpty();
+          expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+          const clipping = await page.locator('.results-reveal .result-card .card-action').evaluateAll(nodes =>
+            nodes.some(node => node.scrollWidth > node.clientWidth + 1));
+          expect(clipping).toBe(false);
         }
-        await page.setViewportSize({ width: 375, height: 812 });
-        // The shell itself must stay usable: muting toggles aria-pressed without occlusion.
+        await page.locator('#btn-app-menu').scrollIntoViewIfNeeded();
+        await page.locator('#btn-app-menu').click();
         const mute = page.locator('#btn-audio-mute');
         await expect(mute).toBeVisible();
-        const pressedBefore = await mute.getAttribute('aria-pressed');
+        const before = await mute.getAttribute('aria-pressed');
         await mute.click();
-        await expect(mute).toHaveAttribute('aria-pressed', pressedBefore === 'true' ? 'false' : 'true');
-        metrics[variant] = perWidth;
+        await expect(mute).toHaveAttribute('aria-pressed', before === 'true' ? 'false' : 'true');
+        await page.locator('#btn-app-menu').click();
+        await expect(mute).toBeHidden();
       }
-
-      fs.writeFileSync(
-        path.join(evidenceDir, `f3s-shell-clearance-geometry-${project}.json`),
-        JSON.stringify(metrics, null, 2)
-      );
-
-      const knownFactions = new Set(Object.values(FACTIONS).map((faction) => faction.label));
-      for (const variant of variants) {
-        const perWidth = metrics[variant];
-        expect(perWidth, `metrics missing for ${variant}`).toBeDefined();
-        if (!perWidth) continue;
-        for (const [width, probe] of Object.entries(perWidth)) {
-          const where = `${variant}@${width}`;
-          expect(probe.maxScroll, `${where} page must be scrollable`).toBeGreaterThan(0);
-          expect(probe.atMaxScroll, `${where} not at maximum scroll`).toBe(true);
-          expect(
-            probe.cardClearance,
-            `${where} bottom card clearance ${probe.cardClearance.toFixed(1)}px (card bottom ${probe.card.bottom.toFixed(1)}, shell top ${probe.shell.top.toFixed(1)})`
-          ).toBeGreaterThanOrEqual(8);
-          expect(
-            probe.factionClearance,
-            `${where} faction row clearance above shell`
-          ).toBeGreaterThanOrEqual(8);
-          expect(probe.cardHitInside, `${where} bottom card edge hit ${probe.cardHitTag}`).toBe(true);
-          expect(probe.factionHitInside, `${where} faction row hit ${probe.factionHitTag}`).toBe(true);
-          expect(probe.faction?.text ?? '', `${where} faction row text`).not.toBe('');
-          expect(knownFactions.has(probe.faction?.text ?? ''), `${where} faction label`).toBe(true);
-          expect(probe.shellLabel, `${where} audio shell label`).toBe('音訊設定');
-          expect(probe.muteHittable, `${where} shell mute button must stay hittable`).toBe(true);
-          expect(probe.pageOverflow, `${where} horizontal page overflow`).toBe(false);
-        }
-      }
-      expect(errors).toEqual([]);
-    } finally {
-      await Promise.all(contexts.map((context) => context.close()));
-    }
+    } finally { await Promise.all(contexts.map(context => context.close())); }
   });
 });

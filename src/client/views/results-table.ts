@@ -14,6 +14,7 @@ import type { GameResult, PlayerProjection } from '../../shared/state.ts';
 import { PLAYER_LOCATIONS } from '../../shared/rules.ts';
 import { getTableSeats } from './game-seating.ts';
 import { renderResultCard } from './game-cards.ts';
+import { locationArt } from './card-art.ts';
 
 export function renderResultsTable(projection: PlayerProjection, result: GameResult): HTMLElement {
   const ring = el('div', { class: 'table-ring results-reveal' });
@@ -40,6 +41,7 @@ export function renderResultsTable(projection: PlayerProjection, result: GameRes
     };
     if (isViewer) seatAttrs['aria-current'] = 'true';
     const seatChildren: (Node | string)[] = [
+      ...(assignment ? [locationArt(assignment.locationId, 'seat-location-art')] : []),
       el('span', { class: 'seat-name' }, [player.playerName + (isViewer ? ' (我)' : '')]),
       el('span', { class: 'seat-location' }, [locationLabel]),
     ];
@@ -54,7 +56,7 @@ export function renderResultsTable(projection: PlayerProjection, result: GameRes
 
   ring.appendChild(seatsLayer);
 
-  const guestRoomChildren: (Node | string)[] = [el('span', { class: 'guest-room-name' }, ['客房'])];
+  const guestRoomChildren: (Node | string)[] = [locationArt('guest_room', 'guest-room-art'), el('span', { class: 'guest-room-name' }, ['客房'])];
   if (result.guestRoomCard) {
     guestRoomChildren.push(renderResultCard(result.guestRoomCard.role));
   } else {

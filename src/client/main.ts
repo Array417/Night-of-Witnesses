@@ -8,6 +8,7 @@ import { renderHome } from './views/home.ts';
 import { renderLobby } from './views/lobby.ts';
 import { renderGame } from './views/game.ts';
 import { renderResults } from './views/results.ts';
+import { disposeCardDrag } from './views/card-drag.ts';
 
 declare global {
   interface Window {
@@ -21,15 +22,21 @@ declare global {
 
 let lastPhase: string | null = null;
 let lastVersion: number = -1;
+let audioControls: HTMLElement | null = null;
+let appMenuOpen = false;
 
 function renderCurrentView(app: HTMLElement, client: GameClient): void {
   // The dock's countdown interval and voice subscription never outlive their view.
   disposePhaseActions();
+  disposeCardDrag();
+  appMenuOpen = app.querySelector<HTMLDetailsElement>('#app-menu')?.open ?? false;
+  audioControls?.remove();
   const projection = client.getProjection();
 
   if (!projection) {
     lastPhase = null;
     renderHome(app, client);
+    mountMenu(app);
     return;
   }
 
@@ -84,6 +91,29 @@ function renderCurrentView(app: HTMLElement, client: GameClient): void {
       renderHome(app, client);
       break;
   }
+  mountMenu(app);
+}
+
+function mountMenu(app: HTMLElement): void {
+  if (!audioControls) return;
+  let content = app.querySelector<HTMLElement>('#game-menu-content');
+  if (!content) {
+    const menu = document.createElement('details');
+    menu.id = 'app-menu';
+    menu.className = 'app-menu';
+    menu.open = appMenuOpen;
+    const summary = document.createElement('summary');
+    summary.textContent = '☰ Menu 選單';
+    summary.id = 'btn-app-menu';
+    content = document.createElement('div');
+    content.className = 'app-menu-content';
+    menu.append(summary, content);
+    app.prepend(menu);
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { menu.open = false; summary.focus(); }
+    });
+  }
+  content.appendChild(audioControls);
 }
 
 import { renderShowcase } from './showcase/index.ts';
@@ -122,7 +152,7 @@ function initApp(): void {
     return;
   }
 
-  // Mount persistent audio controls and connection badge outside #app
+  // Connection badge persists outside the view; settings are reparented into Menu.
   updateConnectionBadge('connecting');
 
   const client = new GameClient({
@@ -151,12 +181,11 @@ function initApp(): void {
       }
     },
     onRoomClosed: (reason) => {
-      disposePhaseActions();
-      updateConnectionBadge('disconnected');
+      updateConnectionBadge(client.getStatus());
       audioManager.playCue('disconnect');
       audioManager.syncAmbience({ hasActiveRoom: false });
       announce(`房間已關閉：${reason}`);
-      renderHome(app, client);
+      renderCurrentView(app, client);
     },
   });
 
@@ -169,7 +198,7 @@ function initApp(): void {
   }
 
   // Voice/sound settings mount after the client (and its voice controller) exists.
-  mountAudioControls(document.body, client.voice);
+  audioControls = mountAudioControls(document.body, client.voice);
 
   // Connect WebSocket
   client.connect();

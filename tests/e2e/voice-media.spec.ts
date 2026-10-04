@@ -15,7 +15,7 @@ import { test, expect, chromium, type Browser, type Page } from '@playwright/tes
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { completeDraft, startRoom } from './draft-flow.ts';
+import { completeDraft, startRoom, openGameMenu, closeGameMenu } from './draft-flow.ts';
 import {
   installProbe,
   probeStats,
@@ -68,14 +68,15 @@ test.describe('voice media happy path (native WebRTC)', () => {
 
         // Listener resolves playback blocks (if any) without ever opening the mic.
         for (const page of pages) {
+          await openGameMenu(page);
           const blocked = await page.evaluate(
             () => window.__NOW__?.client?.voice.getState().playbackBlocked ?? false
           );
-          if (blocked) await page.locator('.table-action-dock #btn-resume-voice').click();
+          if (blocked) await page.locator('#game-menu-content #btn-resume-voice').click();
         }
 
         // Speaker opens the mic through the real button.
-        const micBtn = speaker.locator('.table-action-dock #btn-toggle-mic');
+        const micBtn = speaker.locator('#game-menu-content #btn-toggle-mic');
         await micBtn.click();
         await expect(micBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 20000 });
         await expect(speaker.locator('.voice-panel .alert-error')).toBeHidden();
@@ -152,7 +153,8 @@ test.describe('voice media happy path (native WebRTC)', () => {
         await expect(speaker.locator('.table-action-dock h2')).toHaveText('自由討論階段', {
           timeout: 30000,
         });
-        const speakerMic = speaker.locator('.table-action-dock #btn-toggle-mic');
+        await openGameMenu(speaker);
+        const speakerMic = speaker.locator('#game-menu-content #btn-toggle-mic');
         await expect(speakerMic).toHaveAttribute('aria-pressed', 'false');
         await speakerMic.click();
         await expect(speakerMic).toHaveAttribute('aria-pressed', 'true', { timeout: 20000 });
@@ -169,6 +171,7 @@ test.describe('voice media happy path (native WebRTC)', () => {
 
         // Unanimous consent exits the phase: media stops and native PCs dispose.
         for (const page of pages) {
+          await closeGameMenu(page);
           await page.locator('.table-action-dock #btn-advance-vote').click();
         }
         for (const page of pages) {

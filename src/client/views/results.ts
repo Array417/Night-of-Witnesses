@@ -1,4 +1,5 @@
 import { el } from '../ui/dom.ts';
+import { locationArt } from './card-art.ts';
 import type { GameClient } from '../net.ts';
 import type { PlayerProjection } from '../../shared/state.ts';
 import { FACTIONS, PLAYER_LOCATIONS, ROLES } from '../../shared/rules.ts';
@@ -55,6 +56,7 @@ export function renderResults(
     // Boiler Room Occupants
     el('section', { class: 'results-section', 'aria-labelledby': 'boiler-heading', style: 'margin-bottom: 1.5rem;' }, [
       el('h3', { id: 'boiler-heading', style: 'margin-bottom: 0.75rem;' }, ['進入鍋爐室者']),
+      locationArt('boiler_room', 'boiler-room-art'),
       result.boilerOccupants.length === 0
         ? el('p', { class: 'empty-state text-muted' }, ['無人進入鍋爐室'])
         : el(

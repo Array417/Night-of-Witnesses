@@ -9,6 +9,7 @@
 import { FACTIONS, ROLES, ROLE_DETAILS } from '../../shared/rules.ts';
 import type { Card, RoleId } from '../../shared/rules.ts';
 import { el } from '../ui/dom.ts';
+import { roleArt } from './card-art.ts';
 
 export const CARD_BACK_LABEL = '玩家的隱藏卡牌';
 
@@ -56,6 +57,7 @@ export function renderResultCard(role: RoleId): HTMLDivElement {
   return el('div', { class: 'result-card' }, [
     createCardBack('hidden'),
     el('div', { class: 'card-face', 'data-hand': 'result' }, [
+      roleArt(role),
       el('span', { class: 'card-kicker' }, ['結果']),
       el('span', { class: 'card-role' }, [roleDef.label]),
       el('span', { class: 'card-action' }, [FACTIONS[roleDef.faction].label]),
@@ -94,6 +96,7 @@ export function renderOwnCard(card: Card, options: OwnCardOptions = {}): HTMLDiv
       tabindex: '0',
     },
     [
+      roleArt(card.role),
       el('span', { class: 'card-kicker' }, [options.kicker ?? '手牌']),
       el('span', { class: 'card-role' }, [card.label]),
       el('span', { class: 'card-action' }, [options.actionHint ?? '按 Enter 查看詳情']),
@@ -129,6 +132,8 @@ export function renderCardDetailDialog(): HTMLDialogElement {
 }
 
 function fillCardDetail(dialog: HTMLDialogElement, roleId: RoleId, passable: boolean): void {
+  dialog.querySelector('.card-detail-art')?.remove();
+  dialog.prepend(roleArt(roleId, 'card-detail-art'));
   const role = ROLES[roleId];
   const detail = ROLE_DETAILS[roleId];
   const title = dialog.querySelector('#card-detail-title');

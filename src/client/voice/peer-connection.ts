@@ -8,9 +8,11 @@ import type {
   MeshMediaStream,
   MeshSignalSender,
   RemoteAudioSink,
+  PeerDiagnostics,
 } from './peer.ts';
 
 export interface VoicePeerEvents {
+  notifyPeerState?(): void;
   sendSignal: MeshSignalSender;
   reportError(message: string): void;
   notifyPlaybackBlocked(): void;
@@ -22,6 +24,7 @@ export interface VoicePeerDeps {
 }
 
 export class VoicePeer {
+  connectionState: RTCPeerConnectionState = 'new';
   private queue: Promise<void> = Promise.resolve();
   private pendingCandidates: RTCIceCandidateInit[] = [];
   private remoteSet = false;
@@ -61,7 +64,14 @@ export class VoicePeer {
       this.attachSink(stream);
     });
     connection.setFailedHandler(() => {
+      this.connectionState = 'failed';
+      this.events.notifyPeerState?.();
       this.events.reportError('與玩家語音連線失敗，仍可繼續遊戲');
+    });
+    connection.setStateHandler?.(state => {
+      if (this.detached) return;
+      this.connectionState = state;
+      this.events.notifyPeerState?.();
     });
     connection.addSendRecvTransceiver();
   }
@@ -127,11 +137,12 @@ export class VoicePeer {
     await this.connection.addIceCandidate(init);
   }
 
-  setLocalTrack(track: MeshAudioTrack | null): void {
-    if (track !== null && track.kind !== 'audio') return;
+  setLocalTrack(track: MeshAudioTrack | null): Promise<void> {
+    if (track !== null && track.kind !== 'audio') return Promise.resolve();
     this.localTrack = track;
-    this.connection.replaceAudioTrack(track).catch((err: unknown) => {
+    return this.connection.replaceAudioTrack(track).catch((err: unknown) => {
       this.events.reportError(`同步麥克風音軌失敗：${nativeErrorMessage(err)}`);
+      throw err;
     });
   }
 
@@ -143,6 +154,10 @@ export class VoicePeer {
   replay(): Promise<void> {
     if (!this.sink) return Promise.resolve();
     return this.sink.play();
+  }
+
+  diagnostics(): Promise<PeerDiagnostics | null> {
+    return this.connection.getDiagnostics?.() ?? Promise.resolve(null);
   }
 
   detach(): void {

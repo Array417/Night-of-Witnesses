@@ -646,7 +646,8 @@ test.describe('Canonical wooden table surface (Todo 5)', () => {
         element.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
         return transfer.getData('text/plain');
       });
-      expect(dragged).toBe(ownCardId);
+      expect(dragged).toBe('');
+      await expect(handCards(alice).first()).toHaveAttribute('data-pointer-draggable', 'true');
 
       // Eligible seats are exactly the unserved, connected opponents.
       const targetIds = await alice

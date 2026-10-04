@@ -9,7 +9,7 @@ import {
   type PlayerLocationId,
 } from '../../shared/rules.ts';
 import { audioManager } from '../audio/manager.ts';
-import { renderVoicePanel } from '../audio/voice-controls.ts';
+import { renderVoiceStatus } from '../audio/voice-controls.ts';
 import { renderDiscussionConsent } from './discussion-consent.ts';
 
 /** Shown when a phase action cannot be dispatched (offline or one already in flight). */
@@ -138,7 +138,7 @@ export function renderDiscussionAction(
   // Both own intervals/subscriptions that main disposes on every rerender.
   const cleanups: Array<() => void> = [
     renderDiscussionConsent(container, projection, client),
-    renderVoicePanel(container, client.voice),
+    renderVoiceStatus(container, client.voice),
   ];
   ownPhaseCleanup(() => {
     for (const cleanup of cleanups) cleanup();

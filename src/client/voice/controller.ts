@@ -10,6 +10,7 @@ import { describeMicError, stopStream, type AcquiredMic, type MicPipeline } from
 import { nativeErrorMessage } from './signaling.ts';
 
 export interface VoiceState {
+  peers: Array<{ playerId: string; connectionState: RTCPeerConnectionState }>;
   available: boolean;
   active: boolean;
   micEnabled: boolean;
@@ -56,6 +57,7 @@ export class VoiceController {
       typeof RTCPeerConnection !== 'undefined' || options.createConnection !== undefined;
     const prefs = getVoicePreferences();
     this.state = {
+      peers: [],
       available: this.available,
       active: false,
       micEnabled: false,
@@ -68,6 +70,7 @@ export class VoiceController {
     this.acquireMic = options.acquireMic ?? ((gain) => this.defaultAcquireMic(gain));
     this.mesh = new VoiceMesh(
       {
+        notifyPeerState: () => { this.patch({ peers: this.mesh.getPeerStates() }); },
         sendSignal,
         reportError: (message) => {
           this.patch({ error: message });
@@ -82,7 +85,20 @@ export class VoiceController {
   }
 
   getState(): VoiceState {
-    return { ...this.state };
+    return { ...this.state, peers: this.state.peers.map(peer => ({ ...peer })) };
+  }
+
+  /** User-triggered diagnostics contain counters/states, never SDP, device IDs or ICE secrets. */
+  async getDiagnostics(): Promise<unknown> {
+    let permission = 'unknown';
+    try { permission = (await navigator.permissions.query({ name: 'microphone' as PermissionName })).state; } catch { /* browser may not expose mic permission */ }
+    return {
+      secureContext: typeof window === 'undefined' ? null : window.isSecureContext,
+      permission,
+      audioContextState: this.audioCtx?.state ?? 'not-created',
+      state: this.getState(),
+      transport: await this.mesh.getDiagnostics(),
+    };
   }
 
   subscribe(listener: () => void): () => void {
@@ -112,15 +128,15 @@ export class VoiceController {
     this.micWanted = true;
     const generation = (this.micGeneration += 1);
     this.patch({ micPending: true, error: null });
+    // Invoke receive playback within the same user gesture as mic acquisition.
+    const playback = this.resumePlayback();
     let acquired: AcquiredMic | null = null;
     try {
       acquired = await this.acquireMic(this.state.micGain);
     } catch (err) {
       if (generation !== this.micGeneration) return;
-      this.patch({ error: describeMicError(err), micEnabled: false });
+      this.patch({ error: describeMicError(err), micEnabled: false, micPending: false });
       return;
-    } finally {
-      if (generation === this.micGeneration) this.patch({ micPending: false });
     }
     if (generation !== this.micGeneration || !this.micWanted || !this.active || !acquired) {
       if (acquired) {
@@ -138,12 +154,22 @@ export class VoiceController {
       pipeline: acquired.pipeline,
       disposeStack: acquired.disposeStack,
     };
-    await this.mesh.setLocalStream(processed);
-    if (generation !== this.micGeneration || !this.micWanted || !this.active) {
-      this.teardownMic();
+    try {
+      await this.mesh.setLocalStream(processed);
+    } catch (err) {
+      if (generation === this.micGeneration) {
+        this.teardownMic();
+        this.patch({ error: `同步麥克風音軌失敗：${nativeErrorMessage(err)}`, micPending: false });
+      }
       return;
     }
-    this.patch({ micEnabled: true, error: null });
+    if (generation !== this.micGeneration || !this.micWanted || !this.active) {
+      // Cancellation already stopped this operation's mic. A newer enable may
+      // now own this.mic, so an obsolete completion must not tear it down.
+      return;
+    }
+    this.patch({ micEnabled: true, micPending: false, error: null });
+    await playback;
   }
 
   async resumePlayback(): Promise<void> {
@@ -191,7 +217,7 @@ export class VoiceController {
       this.teardownMic();
       this.mesh.suspend();
       this.active = false;
-      this.patch({ active: false, micEnabled: false, micPending: false });
+      this.patch({ active: false, micEnabled: false, micPending: false, error: this.available ? null : this.state.error, playbackBlocked: false });
       return;
     }
     this.active = true;
@@ -217,10 +243,13 @@ export class VoiceController {
       });
     }
     this.active = false;
-    this.patch({ active: false, micEnabled: false, micPending: false, playbackBlocked: false });
+    this.patch({ active: false, micEnabled: false, micPending: false, playbackBlocked: false, error: this.available ? null : this.state.error });
   }
 
   private async defaultAcquireMic(gain: number): Promise<AcquiredMic> {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      throw new DOMException('Microphone requires a secure context', 'SecurityError');
+    }
     if (!this.audioCtx) this.audioCtx = new AudioContext();
     if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
     const raw = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -240,7 +269,8 @@ export class VoiceController {
         gainNode.disconnect();
       },
     };
-    return { raw, pipeline, disposeStack: () => pipeline.dispose() };  }
+    return { raw, pipeline, disposeStack: () => pipeline.dispose() };
+  }
 
   private teardownMic(): void {
     const mic = this.mic;
@@ -250,7 +280,7 @@ export class VoiceController {
       stopStream(mic.processed);
       mic.disposeStack();
     }
-    void this.mesh.setLocalStream(null);
+    void this.mesh.setLocalStream(null).catch(() => {});
     this.patch({ micEnabled: false });
   }
 

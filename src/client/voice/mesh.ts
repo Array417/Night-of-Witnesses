@@ -16,6 +16,7 @@ import {
 import { VoicePeer, type VoicePeerEvents } from './peer-connection.ts';
 
 export interface VoiceMeshEvents {
+  notifyPeerState?(): void;
   sendSignal: MeshSignalSender;
   reportError(message: string): void;
   notifyPlaybackBlocked(): void;
@@ -54,6 +55,14 @@ export class VoiceMesh {
     this.iceServers = servers;
   }
 
+  getPeerStates(): Array<{ playerId: string; connectionState: RTCPeerConnectionState }> {
+    return [...this.peers].map(([playerId, peer]) => ({ playerId, connectionState: peer.connectionState }));
+  }
+
+  async getDiagnostics(): Promise<unknown[]> {
+    return Promise.all([...this.peers].map(async ([playerId, peer]) => ({ playerId, ...(await peer.diagnostics()) })));
+  }
+
   setOutputVolume(volume: number): void {
     this.outputVolume = volume;
     for (const peer of this.peers.values()) peer.setVolume(volume);
@@ -75,10 +84,12 @@ export class VoiceMesh {
       this.peers.set(id, peer);
       if (isOfferer(selfId, id)) void peer.run(() => peer.makeOffer());
     }
+    this.events.notifyPeerState?.();
   }
 
   suspend(): void {
     for (const id of [...this.peers.keys()]) this.removePeer(id);
+    this.events.notifyPeerState?.();
   }
 
   handleSignal(fromPlayerId: string, kind: RtcSignalKind, payload: string): void {
@@ -107,11 +118,11 @@ export class VoiceMesh {
     }
   }
 
-  setLocalStream(stream: MeshMediaStream | null): void {
+  async setLocalStream(stream: MeshMediaStream | null): Promise<void> {
     const track = stream ? (stream.getAudioTracks()[0] ?? null) : null;
     if (track !== null && track.kind !== 'audio') return;
     this.localTrack = track;
-    for (const peer of this.peers.values()) peer.setLocalTrack(track);
+    await Promise.all([...this.peers.values()].map(peer => peer.setLocalTrack(track)));
   }
 
   async replayAll(): Promise<void> {
@@ -140,7 +151,7 @@ export class VoiceMesh {
         createSink: this.createAudioSink,
       });
       peer.setVolume(this.outputVolume);
-      peer.setLocalTrack(this.localTrack);
+      void peer.setLocalTrack(this.localTrack).catch(() => {});
       return peer;
     } catch (err) {
       this.events.reportError(`建立語音音軌失敗：${nativeErrorMessage(err)}`);

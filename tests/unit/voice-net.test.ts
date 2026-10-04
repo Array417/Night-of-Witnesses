@@ -33,6 +33,10 @@ class FakeNativePC {
   ontrack: unknown = null;
   onconnectionstatechange: unknown = null;
   connectionState = 'new';
+  stateListeners: Array<() => void> = [];
+  addEventListener(type: string, listener: () => void): void {
+    if (type === 'connectionstatechange') this.stateListeners.push(listener);
+  }
   sender = new FakeSender();
   closed = false;
   constructor(_config: unknown) {
@@ -184,6 +188,11 @@ describe('game client voice signaling', () => {
       .find((msg) => msg.type === 'rtc_signal' && msg.kind === 'offer');
     assert.ok(offer);
     assert.equal(offer.targetPlayerId, 'p2');
+    assert.equal(client.voice.getState().peers[0].connectionState, 'new');
+    const connection = FakeNativePC.instances[0];
+    connection.connectionState = 'connected';
+    connection.stateListeners.forEach(listener => listener());
+    assert.equal(client.voice.getState().peers[0].connectionState, 'connected');
 
     assert.equal(client.dispatchAction({ type: 'advance_to_vote' }), true);
     assert.equal(client.isActionPending(), true);
@@ -243,6 +252,30 @@ describe('game client voice signaling', () => {
     socket.serverSend(projection(11, 'discussion', ['p1', 'p2']));
     await flush();
     assert.equal(socket.sent.length, before);
+    client.disconnect();
+  });
+
+  test('leave rejection permits retry and revoked rejoin after lost acknowledgement returns home', () => {
+    let closed = false;
+    const client = new GameClient({ onRoomClosed: () => { closed = true; } });
+    client.connect();
+    const socket = FakeSocket.instances[0];
+    socket.serverSend(welcome);
+    socket.serverSend(projection(10, 'lobby', ['p1', 'p2']));
+    assert.equal(client.dispatchAction({ type: 'leave' }), true);
+    assert.equal(client.dispatchAction({ type: 'leave' }), false);
+    socket.serverSend({ type: 'error', code: 'INVALID_ACTION', message: 'retry' });
+    assert.ok(client.getProjection());
+    assert.equal(client.dispatchAction({ type: 'leave' }), true);
+    // The server has removed the seat, but the close acknowledgement was lost.
+    client.connect();
+    const reconnected = FakeSocket.instances[1];
+    reconnected.onopen?.();
+    assert.equal(lastSent(reconnected).type, 'rejoin');
+    reconnected.serverSend({ type: 'error', code: 'INVALID_TOKEN', message: 'revoked' });
+    assert.equal(client.getProjection(), null);
+    assert.equal(closed, true);
+    assert.equal(client.createRoom('again'), true);
     client.disconnect();
   });
 

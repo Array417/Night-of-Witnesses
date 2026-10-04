@@ -34,6 +34,7 @@ export function renderLobby(
         `目前人數：${playerCount} / 6 人（需 3 至 6 人方可開始）`,
       ]),
       el('div', { class: 'btn-group', style: 'margin-top: 12px;' }, [
+        el('button', { id: 'btn-leave-room', type: 'button', class: 'secondary-button' }, ['← 返回大廳']),
         el(
           'button',
           { id: 'btn-copy-link', type: 'button', class: 'secondary-button' },
@@ -160,6 +161,15 @@ export function renderLobby(
   ]);
 
   // Copy link
+  const leaveBtn = panel.querySelector<HTMLButtonElement>('#btn-leave-room')!;
+  leaveBtn.addEventListener('click', () => {
+    if (client.dispatchAction({ type: 'leave' })) {
+      leaveBtn.disabled = true;
+      leaveBtn.textContent = '離開中…';
+    } else {
+      showInlineAlert(panel, '離房失敗：連線中斷或已有操作正在處理，請稍後再試。');
+    }
+  });
   const copyBtn = panel.querySelector('#btn-copy-link') as HTMLButtonElement;
   copyBtn.addEventListener('click', async () => {
     const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${projection.roomCode}`;

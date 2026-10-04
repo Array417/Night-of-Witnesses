@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { completeDraft, startRoom } from './draft-flow.ts';
+import { completeDraft, startRoom, openGameMenu, closeGameMenu } from './draft-flow.ts';
 
 test.describe('discussion voice panel', () => {
   test('mic defaults off, failures stay readable, and the consent flow keeps working', async ({ browser }) => {
@@ -13,7 +13,8 @@ test.describe('discussion voice panel', () => {
       const voiceWired = await p1.evaluate(() => Boolean(window.__NOW__?.client?.voice));
       test.skip(!voiceWired, 'voice controller not wired yet (parallel media agent owns client.voice)');
 
-      const micBtn = p1.locator('.table-action-dock #btn-toggle-mic');
+      await openGameMenu(p1);
+      const micBtn = p1.locator('#game-menu-content #btn-toggle-mic');
       await expect(micBtn).toBeVisible();
       await expect(micBtn).toHaveAttribute('aria-pressed', 'false');
       await expect(micBtn).toHaveText('開啟麥克風');
@@ -36,6 +37,7 @@ test.describe('discussion voice panel', () => {
       }
 
       // The game flow is unaffected: this player can still consent to end discussion.
+      await closeGameMenu(p1);
       await p1.locator('.table-action-dock #btn-advance-vote').click();
       await expect(p1.locator('.table-action-dock .discussion-consent-progress')).toContainText(
         '1 / 3'
@@ -48,7 +50,7 @@ test.describe('discussion voice panel', () => {
     }
   });
 
-  test('discussion consent and voice controls clear the fixed audio shell at max scroll on 375', async ({ browser }) => {
+  test('discussion consent remains unobscured with audio controls inside a closed menu at 375', async ({ browser }) => {
     const { pages, contexts } = await startRoom(browser, ['愛麗絲', '鮑伯', '查理'], {
       viewport: { width: 375, height: 812 },
     });
@@ -78,8 +80,8 @@ test.describe('discussion voice panel', () => {
         };
       });
 
-      expect(probe.voiceClearance).toBeGreaterThanOrEqual(8);
-      expect(probe.consentClearance).toBeGreaterThanOrEqual(8);
+      expect(await page.locator('#game-menu-content #audio-controls-shell').count()).toBe(1);
+      expect(await page.locator('#game-menu').getAttribute('data-state')).toBe('closed');
       expect(probe.consentHitInside).toBe(true);
       expect(probe.pageOverflow).toBe(false);
     } finally {

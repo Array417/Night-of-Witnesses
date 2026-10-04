@@ -379,6 +379,29 @@ export class RoomManager {
     return { projection: projectForViewer(room.state, playerId) };
   }
 
+  /** Explicit lobby departure revokes the seat immediately, unlike reconnectable disconnects. */
+  leaveRoom(roomCode: string, playerId: string): void {
+    const room = this.rooms.get(roomCode.toUpperCase());
+    const seat = room?.seats.get(playerId);
+    if (!room || !seat) throw new RoomError('ACTION_FAILED', '玩家不在房間中');
+    if (room.state.phase !== 'lobby') throw new RoomError('ACTION_FAILED', '只能在房間等待畫面離開房間');
+    room.seats.delete(playerId);
+    room.seatTokens.delete(seat.seatToken);
+    room.state.players = room.state.players.filter(p => p.playerId !== playerId);
+    room.state.version += 1;
+    room.lastActivityAt = this.getTime();
+    if (room.seats.size === 0) {
+      this.rooms.delete(room.code);
+      return;
+    }
+    if (room.state.hostPlayerId === playerId) {
+      const ordered = [...room.seats.values()].sort((a, b) => a.joinedAt - b.joinedAt);
+      const next = ordered.find(s => s.connected) ?? ordered[0];
+      room.state.hostPlayerId = next.playerId;
+      for (const player of room.state.players) player.isHost = player.playerId === next.playerId;
+    }
+  }
+
   /**
    * Expire one room's armed discussion deadline. Server time only.
    * Returns true when the deadline forced a transition to voting.

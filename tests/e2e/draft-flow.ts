@@ -3,8 +3,7 @@
  *
  * Every helper here drives the non-drag canonical path: card detail dialog →
  * `#btn-pass-card` → target activation → mandatory claim dialog. Desktop drag
- * stays a spec-local progressive enhancement because HTML5 drag is not
- * available on touch devices.
+ * is covered separately with pointer events for both mouse and touch.
  */
 import {
   expect,

@@ -8,12 +8,14 @@ import {
 import type { RoomManager } from './rooms.ts';
 import { RoomError } from './rooms.ts';
 import { projectForViewer } from './project.ts';
+import { createTurnIceServers, type TurnConfig } from './turn.ts';
 
 export interface WebSocketOptions {
   allowedOrigins?: string[];
   pingIntervalMs?: number;
   handshakeTimeoutMs?: number;
   iceServers?: IceServerConfig[];
+  turn?: TurnConfig;
   discussionCheckIntervalMs?: number;
 }
 
@@ -66,7 +68,8 @@ export function attachWebSocketServer(
     seatToken: string,
     playerId: string
   ): void {
-    sendServerMessage(ws, { type: 'welcome', roomCode, seatToken, playerId, iceServers });
+    const turnServers = createTurnIceServers(options.turn, playerId);
+    sendServerMessage(ws, { type: 'welcome', roomCode, seatToken, playerId, iceServers: [...iceServers, ...turnServers].slice(0, 8) });
   }
 
   function broadcastRoomProjections(roomCode: string): void {
@@ -314,6 +317,22 @@ export function attachWebSocketServer(
               payload: msg.payload,
             });
           }
+        }
+        return;
+      }
+
+      // A lobby departure is transport membership, not a game reducer action.
+      if (msg.type === 'leave') {
+        try {
+          const roomCode = ctx.roomCode!;
+          manager.leaveRoom(roomCode, ctx.playerId!);
+          ctx.roomCode = undefined;
+          ctx.playerId = undefined;
+          ctx.seatToken = undefined;
+          sendServerMessage(ws, { type: 'room_closed', reason: '已離開房間' });
+          broadcastRoomProjections(roomCode);
+        } catch (err) {
+          sendServerMessage(ws, { type: 'error', code: err instanceof RoomError ? err.code : 'ACTION_FAILED', message: err instanceof Error ? err.message : '離房失敗', actionId: msg.actionId });
         }
         return;
       }

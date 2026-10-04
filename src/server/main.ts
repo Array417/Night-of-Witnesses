@@ -3,6 +3,7 @@ import { createServerInstance } from './http.ts';
 import { attachWebSocketServer } from './socket.ts';
 import { RoomManager } from './rooms.ts';
 import type { IceServerConfig } from '../shared/protocol.ts';
+import { createTurnIceServers } from './turn.ts';
 
 const SUPPORTED_ICE_SCHEMES = ['stun:', 'stuns:', 'turn:', 'turns:'];
 
@@ -84,6 +85,11 @@ if (host === '127.0.0.1' || host === 'localhost') {
 
 const testSeed = process.env.TEST_SEED;
 const iceServers = parseIceServersEnv(process.env.RTC_ICE_SERVERS_JSON);
+const turn = process.env.TURN_HOST || process.env.TURN_SHARED_SECRET
+  ? { host: process.env.TURN_HOST ?? '', secret: process.env.TURN_SHARED_SECRET ?? '' }
+  : undefined;
+createTurnIceServers(turn, 'startup-validation');
+if (turn && iceServers.length > 6) throw new Error('With self-hosted TURN, RTC_ICE_SERVERS_JSON supports at most 6 entries');
 const manager = new RoomManager({
   getSeed: testSeed ? () => testSeed : undefined,
 });
@@ -95,6 +101,7 @@ const { server } = createServerInstance({
 const { close: closeSockets } = attachWebSocketServer(server, manager, {
   allowedOrigins,
   iceServers,
+  turn,
 });
 
 server.listen(port, host, () => {

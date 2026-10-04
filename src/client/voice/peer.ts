@@ -10,6 +10,8 @@ export interface MeshMediaStream {
 }
 
 export interface MeshConnection {
+  setStateHandler?(handler: ((state: RTCPeerConnectionState) => void) | null): void;
+  getDiagnostics?(): Promise<PeerDiagnostics>;
   setIceCandidateHandler(handler: ((candidate: RTCIceCandidateInit | null) => void) | null): void;
   setTrackHandler(handler: ((stream: MeshMediaStream) => void) | null): void;
   setFailedHandler(handler: (() => void) | null): void;
@@ -23,6 +25,15 @@ export interface MeshConnection {
   addIceCandidate(init: RTCIceCandidateInit): Promise<void>;
   replaceAudioTrack(track: MeshAudioTrack | null): Promise<void>;
   close(): void;
+}
+
+export interface PeerDiagnostics {
+  connectionState: RTCPeerConnectionState;
+  iceState: RTCIceConnectionState;
+  signalingState: RTCSignalingState;
+  inboundBytes: number;
+  outboundBytes: number;
+  candidateType: string | null;
 }
 
 export interface RemoteAudioSink {
@@ -78,6 +89,25 @@ class NativeMeshConnection implements MeshConnection {
           if (this.pc.connectionState === 'failed') handler();
         }
       : null;
+  }
+
+  setStateHandler(handler: ((state: RTCPeerConnectionState) => void) | null): void {
+    this.pc.addEventListener('connectionstatechange', () => handler?.(this.pc.connectionState));
+  }
+
+  async getDiagnostics(): Promise<PeerDiagnostics> {
+    const stats = await this.pc.getStats();
+    let inboundBytes = 0;
+    let outboundBytes = 0;
+    let candidateType: string | null = null;
+    stats.forEach(report => {
+      if (report.type === 'inbound-rtp' && report.kind === 'audio') inboundBytes += report.bytesReceived ?? 0;
+      if (report.type === 'outbound-rtp' && report.kind === 'audio') outboundBytes += report.bytesSent ?? 0;
+      if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+        candidateType = stats.get(report.localCandidateId)?.candidateType ?? null;
+      }
+    });
+    return { connectionState: this.pc.connectionState, iceState: this.pc.iceConnectionState, signalingState: this.pc.signalingState, inboundBytes, outboundBytes, candidateType };
   }
 
   addSendRecvTransceiver(): void {

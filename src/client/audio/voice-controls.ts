@@ -16,8 +16,15 @@ const ignoreFailure = (): void => {
 
 function describeStatus(state: VoiceState): string {
   if (!state.available) return VOICE_UNAVAILABLE_HINT;
-  const status = state.active ? '語音已連線。' : '語音連線中…';
+  const connected = state.peers.filter(peer => peer.connectionState === 'connected').length;
+  const failed = state.peers.some(peer => peer.connectionState === 'failed' || peer.connectionState === 'disconnected');
+  const status = !state.active ? '語音僅在討論階段提供。'
+    : failed ? `部分玩家語音未連通（${connected}/${state.peers.length}）。`
+    : connected > 0 ? `語音已連線（${connected}/${state.peers.length}）。` : '正在與玩家建立語音連線…';
+  if (state.playbackBlocked) return `${status}播放受阻，請在選單啟用語音播放。`;
   if (state.micPending) return `${status}麥克風權限請求中…`;
+  if (state.micEnabled && state.micGain === 0) return `${status}麥克風已開啟，但增益為零；請在選單調高。`;
+  if (state.outputVolume === 0) return `${status}收聽音量為零；請在選單調高。`;
   if (state.micEnabled) return `${status}麥克風已開啟。`;
   return `${status}麥克風目前關閉。`;
 }
@@ -30,7 +37,7 @@ export function renderVoicePanel(container: HTMLElement, voice: VoiceController)
   const statusLine = el('p', { class: 'voice-status label-hint' }, []);
   const errorLine = el(
     'div',
-    { class: 'alert alert-error', role: 'alert', style: 'display:none;' },
+    { class: 'voice-error', style: 'display:none;' },
     []
   );
   const micBtn = el(
@@ -60,7 +67,7 @@ export function renderVoicePanel(container: HTMLElement, voice: VoiceController)
     errorLine,
     el('div', { class: 'voice-actions btn-group' }, [micBtn, listenBtn]),
     el('p', { class: 'label-hint', style: 'margin-bottom: 0;' }, [
-      '麥克風預設關閉，僅在討論階段提供；對方語音音量與麥克風增益可於右下角設定面板調整。',
+      '麥克風預設關閉；不用開啟自己的麥克風也能收聽。音量及增益在此選單下方調整。',
     ]),
   ]);
   container.appendChild(panel);
@@ -69,7 +76,7 @@ export function renderVoicePanel(container: HTMLElement, voice: VoiceController)
 
   const sync = (): void => {
     const state = voice.getState();
-    micBtn.disabled = !state.available;
+    micBtn.disabled = !state.available || !state.active;
     micBtn.setAttribute('aria-pressed', String(state.micEnabled));
     micBtn.textContent = state.micPending
       ? '取消麥克風要求'
@@ -79,6 +86,9 @@ export function renderVoicePanel(container: HTMLElement, voice: VoiceController)
     listenBtn.style.display = state.playbackBlocked ? '' : 'none';
     statusLine.textContent = describeStatus(state);
     errorLine.textContent = state.error ?? '';
+    errorLine.classList.toggle('alert', Boolean(state.error));
+    errorLine.classList.toggle('alert-error', Boolean(state.error));
+    if (state.error) errorLine.setAttribute('role', 'alert'); else errorLine.removeAttribute('role');
     errorLine.style.display = state.error ? 'flex' : 'none';
   };
 
@@ -98,6 +108,30 @@ export function renderVoicePanel(container: HTMLElement, voice: VoiceController)
   return () => {
     unsubscribe();
   };
+}
+
+/** Compact table status, with controls kept exclusively inside the menu. */
+export function renderVoiceStatus(container: HTMLElement, voice: VoiceController): () => void {
+  const status = el('p', { class: 'voice-status label-hint', role: 'status', 'aria-live': 'polite' });
+  const open = el('button', { type: 'button', class: 'secondary-button voice-menu-link' }, ['開啟 Menu 語音設定']);
+  const host = el('div', { class: 'voice-summary' }, [status, open]);
+  container.appendChild(host);
+  const sync = () => {
+    const state = voice.getState();
+    status.textContent = describeStatus(state);
+    open.hidden = !state.playbackBlocked && !state.error;
+  };
+  open.addEventListener('click', () => {
+    const menu = document.getElementById('game-menu');
+    if (menu?.dataset.state === 'closed') document.getElementById('btn-show-game-menu')?.click();
+    else if (menu?.dataset.state === 'collapsed') document.getElementById('btn-toggle-game-menu')?.click();
+    const appMenu = document.querySelector<HTMLDetailsElement>('#app-menu');
+    if (appMenu) appMenu.open = true;
+    document.getElementById('btn-resume-voice')?.focus();
+  });
+  const unsubscribe = voice.subscribe(sync);
+  sync();
+  return unsubscribe;
 }
 
 interface RangeFieldOptions {
@@ -132,7 +166,7 @@ function rangeField(options: RangeFieldOptions): {
 
 /**
  * Appends the persistent voice/sound settings disclosure to the audio shell.
- * The shell renders outside `#app` and lives for the page lifetime, so the single
+ * The shell moves between menus and lives for the page lifetime, so the single
  * voice subscription is intentionally never torn down.
  */
 export function mountVoiceSettings(
@@ -183,6 +217,19 @@ export function mountVoiceSettings(
     ]),
   ]);
   shell.appendChild(details);
+  if (voice) {
+    const button = el('button', { type: 'button', id: 'btn-voice-diagnostics', class: 'secondary-button' }, ['檢查語音連線']);
+    const result = el('pre', { id: 'voice-diagnostics', hidden: '', tabindex: '0', 'aria-label': '語音連線診斷' });
+    details.querySelector('.settings-fields')!.append(button, result);
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      result.hidden = false;
+      result.textContent = '正在檢查…';
+      try { result.textContent = JSON.stringify(await voice.getDiagnostics(), null, 2); }
+      catch { result.textContent = '檢查失敗，請稍後重試。'; }
+      finally { button.disabled = false; }
+    });
+  }
 
   masterSlider.addEventListener('input', () => {
     game.slider.value = masterSlider.value;

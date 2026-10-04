@@ -11,7 +11,7 @@ import {
   ProceduralAmbience,
   type AudioCueName,
 } from './cues.ts';
-import { mountVoiceSettings } from './voice-controls.ts';
+import { mountVoiceSettings, renderVoicePanel } from './voice-controls.ts';
 import type { VoiceController } from '../voice/controller.ts';
 
 export interface AudioManagerOptions {
@@ -172,7 +172,7 @@ export class AudioManager {
 export const audioManager = new AudioManager();
 
 /**
- * Creates persistent UI audio controls shell outside #app.
+ * Creates the persistent settings element; main reparents it into the current Menu.
  * `voice` is the media layer's structural controller (client.voice) when available;
  * the shell persists for the page lifetime so it subscribes to it exactly once.
  */
@@ -193,15 +193,18 @@ export function mountAudioControls(
     <button type="button" id="btn-audio-mute" class="secondary-button" aria-label="靜音切換" aria-pressed="${prefs.muted}" style="min-height: 36px; min-width: 36px; padding: 4px 8px; font-size: 13px;">
       ${prefs.muted ? '🔇 靜音' : '🔊 音效'}
     </button>
-    <label for="audio-volume-slider" class="sr-only">主音量</label>
-    <input type="range" id="audio-volume-slider" min="0" max="1" step="0.05" value="${prefs.masterVolume}" aria-label="音量大小" style="width: 72px; min-height: 24px; cursor: pointer;" />
     <button type="button" id="btn-audio-ambience" class="secondary-button" aria-label="酒館環境音切換" aria-pressed="${prefs.ambienceEnabled}" style="min-height: 36px; min-width: 36px; padding: 4px 8px; font-size: 13px;">
       ${prefs.ambienceEnabled ? '🕯️ 環境音' : '🕯️ 靜止'}
     </button>
   `;
 
   const muteBtn = shell.querySelector('#btn-audio-mute') as HTMLButtonElement;
-  const volumeSlider = shell.querySelector('#audio-volume-slider') as HTMLInputElement;
+  const volumeSlider = document.createElement('input');
+  volumeSlider.type = 'range';
+  volumeSlider.min = '0';
+  volumeSlider.max = '1';
+  volumeSlider.step = '0.05';
+  volumeSlider.value = String(prefs.masterVolume);
   const ambienceBtn = shell.querySelector('#btn-audio-ambience') as HTMLButtonElement;
 
   muteBtn.addEventListener('click', async () => {
@@ -230,6 +233,7 @@ export function mountAudioControls(
 
   // Persistent voice/sound settings disclosure (game volume, received voice, mic gain).
   mountVoiceSettings(shell, voice, volumeSlider);
+  if (voice) renderVoicePanel(shell, voice);
 
   // Global user gesture unlock listener
   const unlockHandler = () => {

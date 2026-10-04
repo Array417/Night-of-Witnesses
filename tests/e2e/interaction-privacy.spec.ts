@@ -9,6 +9,7 @@ fs.mkdirSync(evidenceDir, { recursive: true });
 test.describe('Interaction, Audio Persistence and Privacy Contracts (Todo 8)', () => {
   test('audio settings persist in localStorage and update manager state', async ({ page }) => {
     await page.goto('/');
+    await page.locator('#btn-app-menu').click();
 
     // Check default preferences stored or initial state
     await page.locator('#btn-audio-mute').click();

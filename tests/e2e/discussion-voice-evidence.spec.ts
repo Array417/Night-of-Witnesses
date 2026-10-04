@@ -6,7 +6,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { completeDraft, startRoom } from './draft-flow.ts';
+import { completeDraft, startRoom, openGameMenu, closeGameMenu } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence/discussion-voice');
 if (!fs.existsSync(evidenceDir)) {
@@ -34,11 +34,12 @@ for (const width of WIDTHS) {
       });
 
       // 2. Mic enabled or its readable failure.
-      await p3.locator('.table-action-dock #btn-toggle-mic').click();
+      await openGameMenu(p3);
+      await p3.locator('#game-menu-content #btn-toggle-mic').click();
       await expect
         .poll(async () => {
           const pressed = await p3
-            .locator('.table-action-dock #btn-toggle-mic')
+            .locator('#game-menu-content #btn-toggle-mic')
             .getAttribute('aria-pressed');
           return pressed === 'true' || (await p3.locator('.voice-panel .alert-error').isVisible());
         })
@@ -49,6 +50,7 @@ for (const width of WIDTHS) {
       });
 
       // 3. Persistent settings disclosure open.
+      await openGameMenu(p2);
       await p2.locator('#btn-audio-settings').click();
       await expect(p2.locator('#settings-panel')).toHaveAttribute('open', '');
       await p2.screenshot({
@@ -58,6 +60,9 @@ for (const width of WIDTHS) {
       // Close the popover so it cannot overlay the dock at narrow widths.
       await p2.locator('#btn-audio-settings').click();
       await expect(p2.locator('#settings-panel')).not.toHaveAttribute('open', '');
+
+      await closeGameMenu(p2);
+      await closeGameMenu(p3);
 
       // 4. Strict-majority deadline: p3 sees progress 2/3 and the ticking countdown.
       await p1.locator('.table-action-dock #btn-advance-vote').click();

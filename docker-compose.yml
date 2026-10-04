@@ -21,6 +21,31 @@ services:
       ORIGIN: "${ORIGIN:-http://localhost:8213,http://127.0.0.1:8213}"
       # 語音 ICE 伺服器（選填），跨網路語音需要 STUN/TURN。
       RTC_ICE_SERVERS_JSON: "${RTC_ICE_SERVERS_JSON:-[]}"
+      TURN_HOST: "${TURN_HOST:-}"
+      TURN_SHARED_SECRET: "${TURN_SHARED_SECRET:-}"
+
+  # Enable with: docker compose --profile voice up -d --build
+  coturn:
+    image: coturn/coturn:4.18.0-r0-alpine
+    restart: unless-stopped
+    profiles: ["voice"]
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "49160-49200:49160-49200/udp"
+    environment:
+      TURN_SHARED_SECRET: "${TURN_SHARED_SECRET:-}"
+      TURN_HOST: "${TURN_HOST:-}"
+      TURN_EXTERNAL_IP: "${TURN_EXTERNAL_IP:-}"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        test -n "$$TURN_SHARED_SECRET" && test -n "$$TURN_HOST" && test -n "$$TURN_EXTERNAL_IP" || { echo 'Set TURN_HOST, TURN_EXTERNAL_IP and TURN_SHARED_SECRET'; exit 1; }
+        exec turnserver -n --log-file=stdout --fingerprint --use-auth-secret \
+          --static-auth-secret="$$TURN_SHARED_SECRET" --realm="$$TURN_HOST" \
+          --external-ip="$$TURN_EXTERNAL_IP" --listening-port=3478 \
+          --min-port=49160 --max-port=49200 --no-tls --no-dtls \
+          --no-cli --no-multicast-peers --user-quota=12 --total-quota=1200
 
   caddy:
     image: caddy:2-alpine

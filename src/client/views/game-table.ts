@@ -12,6 +12,8 @@ import type { PlayerProjection } from '../../shared/state.ts';
 import { PLAYER_LOCATIONS, ROLES } from '../../shared/rules.ts';
 import { getTableSeats } from './game-seating.ts';
 import { renderOpponentBack, renderOwnCard } from './game-cards.ts';
+import { wireCardDrag } from './card-drag.ts';
+import { locationArt } from './card-art.ts';
 
 export interface GameTableOptions {
   projection: PlayerProjection;
@@ -78,6 +80,7 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
     if (isActive) classNames.push('is-active');
     if (isOffline) classNames.push('is-offline');
     if (isServed) classNames.push('is-served');
+    if (canTarget) classNames.push('is-eligible');
 
     const stateText = seatStateText(isActive, isServed, isOffline);
     const locationLabel = player.locationId
@@ -97,6 +100,7 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
     const seatLabel = `${player.playerName}，地點：${locationLabel}，狀態：${stateText}`;
 
     const seatChildren: (Node | string)[] = [
+      ...(player.locationId ? [locationArt(player.locationId, 'seat-location-art')] : []),
       el('span', { class: 'seat-name' }, [player.playerName + (isViewer ? ' (我)' : '')]),
       el('span', { class: 'seat-location' }, [locationLabel]),
       el('span', { class: 'seat-state' }, [stateText]),
@@ -175,6 +179,7 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
         'aria-label': '客房：最終傳牌目標',
       },
       [
+        locationArt('guest_room', 'guest-room-art'),
         el('span', { class: 'guest-room-name' }, ['客房']),
         el('span', { class: 'guest-room-hint' }, ['最終傳牌目標']),
       ]
@@ -195,13 +200,12 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
         kicker: `手牌 ${index + 1}`,
         actionHint: '點擊保留 / 拖曳傳遞',
       });
-      cardElement.setAttribute('draggable', 'true');
-      cardElement.addEventListener('dragstart', (event) => {
-        const dragEvent = event as DragEvent;
-        if (!dragEvent.dataTransfer) return;
-        dragEvent.dataTransfer.setData('text/plain', card.id);
-        dragEvent.dataTransfer.effectAllowed = 'move';
-      });
+      if (isViewerActor && projection.phase === 'draft' && ownCards.length === 2 && onDropCard) {
+        wireCardDrag(cardElement, tablePanel, target => {
+          const targetId = target.dataset.playerId ?? target.dataset.targetId;
+          if (targetId) onDropCard(targetId, card.id);
+        });
+      }
       handSlot.appendChild(cardElement);
     });
     stage.appendChild(handSlot);

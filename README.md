@@ -198,6 +198,20 @@ natpmpc -g 192.168.0.1 -a 8213 8213 tcp 604800
 另外若 Mac 裝有 Tailscale，UPnP 的 SSDP 廣播可能被路由去 `utun` 而失敗，
 此時改用上面的 NAT-PMP（unicast，唔受影響）即可。
 
+### Caddy 自動 HTTPS（推薦，開埋語音功能）
+
+`docker-compose.yml` 內建 `caddy` 服務，會自動向 Let's Encrypt 申請及續期憑證，並自動處理 WebSocket upgrade。啟用後對外網址為 `https://<你的DDNS域名>`（預設 443，免打 port）。
+
+1. 編輯 `Caddyfile`，改成你嘅 DDNS／域名：
+   `mcslimeserver.ddnsgeek.com { reverse_proxy now-game:3000 }`
+2. 確保路由器已把 **80 同 443** 轉發到本機（NAT-PMP 腳本已預設包含：`./scripts/docker-boot.sh --forward`）。
+3. 啟動：`docker compose up -d`；用 `docker compose logs -f caddy` 睇簽證進度（成功會見 `certificate obtained successfully`）。
+4. 於 `.env` 設定 `ORIGIN=https://<你的DDNS域名>`（可同時保留 http 版本）。
+
+> **為何要 HTTPS？** `crypto.randomUUID()` 同麥克風（`getUserMedia`）只喺安全來源（HTTPS / localhost）可用。
+> 純 HTTP 下建立房間會爆 `crypto.randomUUID is not a function`；本專案已加 fallback（`src/client/uuid.ts`）令 HTTP 都玩到，
+> 但**語音仍然必須 HTTPS**。跨網路語音另需 STUN/TURN（見 `RTC_ICE_SERVERS_JSON`）。
+
 ---
 
 ## 公開部署（Render Web Service）

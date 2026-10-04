@@ -16,6 +16,7 @@ import {
   extractIceServers,
   parseIncomingRtcSignal,
 } from './voice/signaling.ts';
+import { randomUUID } from './uuid.ts';
 
 export type ConnectionStatus =
   | 'connecting'
@@ -118,7 +119,7 @@ export class GameClient {
       if (saved) {
         this.sendRaw({
           type: 'rejoin',
-          actionId: crypto.randomUUID(),
+          actionId: randomUUID(),
           roomCode: saved.roomCode,
           seatToken: saved.seatToken,
         });
@@ -297,7 +298,7 @@ export class GameClient {
     this.inFlightAction = true;
     this.sendRaw({
       type: 'create_room',
-      actionId: crypto.randomUUID(),
+      actionId: randomUUID(),
       playerName,
     });
     return true;
@@ -310,7 +311,7 @@ export class GameClient {
     this.inFlightAction = true;
     this.sendRaw({
       type: 'join_room',
-      actionId: crypto.randomUUID(),
+      actionId: randomUUID(),
       roomCode: roomCode.toUpperCase(),
       playerName,
     });
@@ -333,7 +334,7 @@ export class GameClient {
     this.pendingAdvanceRetry = false;
     const msg = {
       ...action,
-      actionId: crypto.randomUUID(),
+      actionId: randomUUID(),
       baseVersion: this.currentProjection.version,
     } as ClientMessage;
 

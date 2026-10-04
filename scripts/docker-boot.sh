@@ -77,13 +77,11 @@ case "${1:-}" in
     exit 0
     ;;
   --forward)
-    echo "[boot] 立即以 NAT-PMP 建立/更新路由器 port forwarding（對外 ${EXTERNAL_PORT}）…"
-    if [[ ! -x "${SUPPORT_DIR}/natpmp-forward.sh" ]]; then
-      mkdir -p "${SUPPORT_DIR}"
-      cp "${ROOT}/scripts/natpmp-forward.sh" "${SUPPORT_DIR}/natpmp-forward.sh"
-      chmod +x "${SUPPORT_DIR}/natpmp-forward.sh"
-    fi
-    EXTERNAL_PORT="${EXTERNAL_PORT}" "${SUPPORT_DIR}/natpmp-forward.sh"
+    echo "[boot] 立即以 NAT-PMP 建立/更新路由器 port forwarding（80/443/8213）…"
+    mkdir -p "${SUPPORT_DIR}"
+    cp "${ROOT}/scripts/natpmp-forward.sh" "${SUPPORT_DIR}/natpmp-forward.sh"
+    chmod +x "${SUPPORT_DIR}/natpmp-forward.sh"
+    "${SUPPORT_DIR}/natpmp-forward.sh"
     exit 0
     ;;
   --autostart)

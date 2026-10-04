@@ -1,0 +1,10 @@
+# Caddy 反向代理 + 自動 HTTPS（Let's Encrypt）
+# 對外網址：https://mcslimeserver.ddnsgeek.com
+# Caddy 會自動申請憑證、自動續期，亦自動處理 WebSocket upgrade。
+
+mcslimeserver.ddnsgeek.com {
+	encode gzip
+
+	# 轉發畀遊戲容器（Docker compose 網絡內部）
+	reverse_proxy now-game:3000
+}

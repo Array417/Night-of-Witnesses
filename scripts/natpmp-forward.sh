@@ -6,8 +6,8 @@ set -euo pipefail
 # LaunchAgent 的 PATH 精簡，補上 Homebrew（natpmpc）位置
 export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH}"
 
-EXTERNAL_PORT="${EXTERNAL_PORT:-8213}"
-INTERNAL_PORT="${INTERNAL_PORT:-8213}"
+# 要對外開放的 port（空白分隔）。80/443 供 Caddy HTTPS，8213 供直接 HTTP。
+PORTS="${PORTS:-8213 80 443}"
 PROTOCOL="${PROTOCOL:-tcp}"          # tcp / udp
 LIFETIME="${LIFETIME:-604800}"       # 7 日，逾時前自動續期
 
@@ -27,12 +27,15 @@ if [[ -z "${GATEWAY}" ]]; then
   exit 1
 fi
 
-OUT="$(natpmpc -g "${GATEWAY}" -a "${EXTERNAL_PORT}" "${INTERNAL_PORT}" "${PROTOCOL}" "${LIFETIME}" 2>&1 || true)"
+STATUS=0
+for PORT in ${PORTS}; do
+  OUT="$(natpmpc -g "${GATEWAY}" -a "${PORT}" "${PORT}" "${PROTOCOL}" "${LIFETIME}" 2>&1 || true)"
+  echo "[natpmp $(date '+%Y-%m-%d %H:%M:%S')] gateway=${GATEWAY} ${PROTOCOL} 對外 ${PORT} -> 本機 ${PORT}"
+  echo "${OUT}"
+  if ! echo "${OUT}" | grep -q 'Mapped public port'; then
+    echo "[natpmp] 錯誤：port ${PORT} 未成功建立轉發。" >&2
+    STATUS=1
+  fi
+done
 
-echo "[natpmp $(date '+%Y-%m-%d %H:%M:%S')] gateway=${GATEWAY} ${PROTOCOL} 對外 ${EXTERNAL_PORT} -> 本機 ${INTERNAL_PORT}"
-echo "${OUT}"
-
-if ! echo "${OUT}" | grep -q 'Mapped public port'; then
-  echo "[natpmp] 錯誤：路由器未確認 port mapping。" >&2
-  exit 1
-fi
+exit "${STATUS}"

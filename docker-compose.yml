@@ -21,3 +21,23 @@ services:
       ORIGIN: "${ORIGIN:-http://localhost:8213,http://127.0.0.1:8213}"
       # 語音 ICE 伺服器（選填），跨網路語音需要 STUN/TURN。
       RTC_ICE_SERVERS_JSON: "${RTC_ICE_SERVERS_JSON:-[]}"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: now-caddy
+    restart: unless-stopped
+    depends_on:
+      - now-game
+    ports:
+      # HTTPS 對外入口。憑證由 Let's Encrypt 自動簽發及續期。
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
+

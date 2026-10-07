@@ -19,7 +19,35 @@
 
 ---
 
-## 快速啟動 (Local Node.js)
+## 快速啟動 (Docker Compose)
+
+### 使用 Makefile（可選）
+
+服務統一透過 Docker Compose 啟動，包含遊戲、Caddy HTTPS 代理及 coturn 語音服務。
+需要 Docker Engine、Docker Compose 及 `make`。
+Windows 需另外安裝 GNU Make，或在已安裝 make 的 WSL 環境執行。
+
+首次啟動前，複製 `.env.example` 為 `.env`，設定 `ORIGIN`、`TURN_HOST`、
+`TURN_EXTERNAL_IP`、`TURN_SHARED_SECRET`，並將 `Caddyfile` 改成你的網域。
+TURN 三個設定缺少任何一個，coturn 都會拒絕啟動。
+
+```bash
+make help          # 列出指令；直接執行 make 亦會顯示說明
+make build-start   # 建置並背景啟動全部三個服務，等待啟動完成
+make build         # 只建置 Docker 映像檔
+make start         # 背景啟動全部三個服務，等待啟動完成
+make stop          # 停止並移除容器及網路，保留憑證 volumes
+```
+
+不使用 Makefile 時，對應指令為 `docker compose --profile voice up -d --build --wait`
+及 `docker compose --profile voice down`。HTTP 入口為 `http://localhost:8213`，
+HTTPS 入口為 `https://<你的網域>`；公開部署需開放 80、443 及 TURN 所需端口。
+停止或重啟服務會清空記憶體中的遊戲房間，但不會刪除 Caddy 憑證。
+
+### 本機開發與測試（非部署入口）
+
+原有 `make install`、`make check`、`make test`、`make test-e2e`、`make test-manual`
+保留為本機 npm 開發工具；以下 Node.js 流程只供本機開發使用。
 
 ### 1. 安裝相依套件與建置
 

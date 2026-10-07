@@ -9,6 +9,7 @@ RUN npm ci
 
 COPY tsconfig.json tsconfig.server.json vite.config.ts playwright.config.ts index.html ./
 COPY src/ ./src/
+COPY public/ ./public/
 
 RUN npm run build
 

@@ -14,78 +14,59 @@
 
 ## 系統需求
 
-- **Node.js**：`>= 24.12.0`（包含原生 TypeScript 執行環境）
-- **或 Docker**：任何支援標準 OCI 容器的容器執行環境（如 Docker Desktop、Podman）
+- **Docker Engine 與 Docker Compose**（例如 Docker Desktop，macOS 亦可用 Colima）
+- **GNU Make**：Windows 可另外安裝，或在已安裝 Docker 與 make 的 WSL 環境使用。
+- 所有 Dev 啟動、建置、型別檢查及自動化測試只可在 Docker 容器內執行；不要在主機直接執行 npm／Node.js。容器已包含 Node.js 與所需依賴，主機毋須安裝 Node.js。
 
 ---
 
-## 快速啟動 (Docker Compose)
+## 本地 Dev（Docker-only）
 
-### 使用 Makefile（可選）
+### 一個指令建置及啟動
 
-服務統一透過 Docker Compose 啟動，包含遊戲、Caddy HTTPS 代理及 coturn 語音服務。
-需要 Docker Engine、Docker Compose 及 `make`。
-Windows 需另外安裝 GNU Make，或在已安裝 make 的 WSL 環境執行。
-
-首次啟動前，複製 `.env.example` 為 `.env`，設定 `ORIGIN`、`TURN_HOST`、
-`TURN_EXTERNAL_IP`、`TURN_SHARED_SECRET`，並將 `Caddyfile` 改成你的網域。
-TURN 三個設定缺少任何一個，coturn 都會拒絕啟動。
+先啟動 Docker Engine，再在專案根目錄執行：
 
 ```bash
-make help          # 列出指令；直接執行 make 亦會顯示說明
-make build-start   # 建置並背景啟動全部三個服務，等待啟動完成
-make build         # 只建置 Docker 映像檔
-make start         # 背景啟動全部三個服務，等待啟動完成
-make stop          # 停止並移除容器及網路，保留憑證 volumes
+make start         # 建置 Dev 映像並背景啟動，等待健康檢查通過
+make stop          # 停止並移除 Dev 容器、網路及 Dev 映像
 ```
 
-不使用 Makefile 時，對應指令為 `docker compose --profile voice up -d --build --wait`
-及 `docker compose --profile voice down`。HTTP 入口為 `http://localhost:8213`，
-HTTPS 入口為 `https://<你的網域>`；公開部署需開放 80、443 及 TURN 所需端口。
-停止或重啟服務會清空記憶體中的遊戲房間，但不會刪除 Caddy 憑證。
+瀏覽器前往 [http://localhost:3000](http://localhost:3000)。Dev 只啟動遊戲服務，
+主機端只綁定 `127.0.0.1:3000`，不啟動 Caddy／coturn、不需要網域或 TURN 設定。
+`compose.dev.yml` 使用獨立 project `night-of-witnesses-dev` 及映像
+`night-of-witnesses-dev:latest`，不沿用正式部署的環境參數；`make stop` 不會停止部署服務或刪除正式映像／憑證。
+停止或重啟 Dev 會清空該容器記憶體中的房間。`make stop` 不清除 Docker build cache。
 
-### 本機開發與測試（非部署入口）
+程式及素材在建置時複製進映像；修改後重新執行 `make start` 套用，不提供 hot reload。
 
-原有 `make install`、`make check`、`make test`、`make test-e2e`、`make test-manual`
-保留為本機 npm 開發工具；以下 Node.js 流程只供本機開發使用。
+### 開發與測試指令（全部在容器內）
 
-### 1. 安裝相依套件與建置
-
-```powershell
-# 安裝相依套件
-npm ci
-
-# 執行型別檢查
-npm run check
-
-# 執行單元與整合測試
-npm test
-
-# 建置前端與後端
-npm run build
+```bash
+make help          # 指令說明
+make build         # 只建置 Dev 映像並安裝容器內依賴
+make install       # make build 的別名，不安裝主機依賴
+make build-start   # make start 的別名
+make check         # 建置後，在一次性容器中執行型別檢查
+make test          # 建置後，在一次性容器中執行單元及整合測試
+make test-e2e      # 在一次性容器安裝 Chromium 及系統依賴，執行 headless 測試
+make test-manual   # 啟動 Dev，按提示用主機瀏覽器開三個視窗手動測試
 ```
 
-### 2. 啟動服務
-
-```powershell
-# 使用預設設定啟動（監聽 127.0.0.1:3000）
-npm run start
-```
-
-服務啟動後，瀏覽器前往 [http://127.0.0.1:3000](http://127.0.0.1:3000) 即可開始遊戲。
+自動化測試容器結束後會自動移除，測試不需要先啟動 Dev；E2E 的下載及系統依賴安裝亦只在容器內發生。
+測試報告不會自動同步回主機，請以命令輸出查看結果。
 
 ### 單人測試：加入 3 個測試玩家
 
 先用瀏覽器建立房間並記下 6 碼房間代碼，再在另一個 PowerShell 視窗執行：
 
-```powershell
-npm run add-bots -- ABC123
+```bash
+docker compose -p night-of-witnesses-dev -f compose.dev.yml exec dev npm run add-bots -- ABC123
 ```
 
 預設會加入 `Bot 1`、`Bot 2`、`Bot 3`。也可以指定名稱：
 
-```powershell
-npm run add-bots -- ABC123 Alice Bob Charlie
+```bash
+docker compose -p night-of-witnesses-dev -f compose.dev.yml exec dev npm run add-bots -- ABC123 Alice Bob Charlie
 ```
 
 Bot 會自動準備、輪流選牌傳牌、在討論階段同意結束討論，以及在投票階段投票；請保持這個視窗運行。
@@ -125,43 +106,11 @@ Bot 會自動準備、輪流選牌傳牌、在討論階段同意結束討論，�
 
 ---
 
-## 容器化部署 (Docker)
+## 公開部署（macOS／Colima）
 
 本專案提供多階段構建的 `Dockerfile`，以內建的非 root `node` 使用者運行，體積精簡且內建健康檢查。
 
-### 1. 建置 Docker 映像檔
-
-```bash
-docker build -t night-of-witnesses:latest .
-```
-
-### 2. 啟動容器
-
-```bash
-# 本地限定綁定 (推薦)
-docker run --rm -d \
-  --name now-game \
-  -p 127.0.0.1:3000:3000 \
-  -e HOST=0.0.0.0 \
-  -e PORT=3000 \
-  -e ORIGIN=http://localhost:3000 \
-  night-of-witnesses:latest
-```
-
-### 3. 檢查容器狀態與健康度
-
-```bash
-curl.exe -fsS http://localhost:3000/healthz
-# 預期回傳: {"ok":true}
-```
-
-### 4. 停止容器
-
-```bash
-docker stop now-game
-```
-
-### 5. macOS 無 GUI 一鍵部署（Colima + Docker Compose，對外 8213）
+### 一鍵部署（Colima + Docker Compose，對外 8213）
 
 macOS 冇原生 Docker Engine，唔想裝 Docker Desktop 可以用 **Colima**（純 CLI 的 Linux VM）：
 
@@ -173,16 +122,29 @@ brew install colima docker docker-compose docker-buildx
 cp .env.example .env
 
 # 一鍵啟動（會自動啟動 Colima、建置、開服、等待健康檢查）
-./scripts/docker-boot.sh
+make deploy         # 等同 ./scripts/docker-boot.sh
 
 # 其他指令
 ./scripts/docker-boot.sh --logs       # 追蹤日誌
-./scripts/docker-boot.sh --stop       # 停止服務
+make stop-server                    # 等同 ./scripts/docker-boot.sh --stop
 ./scripts/docker-boot.sh --forward     # 用 NAT-PMP 命令列建立路由器 port forwarding
 ./scripts/docker-boot.sh --autostart  # Colima 登入自動啟動 + 安裝 port forwarding 續期服務
 ```
 
 `docker-compose.yml` 將對外（主機）`8213` 對應到容器內部 `3000`，容器設 `restart: unless-stopped`。
+
+`make deploy` 原樣呼叫現有 macOS／Colima 腳本，預設啟動遊戲及 Caddy；不會自動建立 DNS 或 router port forwarding。
+先將網域 DNS 指向公網 IP、設定 `.env` 的 `ORIGIN`，並修改 `Caddyfile` 的網域。
+`make stop-server` 保留正式映像及 Caddy 憑證，也不刪除 DNS 或 router 轉發。
+
+要同時部署 coturn，先填好 `.env` 的 `TURN_HOST`、`TURN_EXTERNAL_IP`、`TURN_SHARED_SECRET`，再使用：
+
+```bash
+COMPOSE_PROFILES=voice make deploy
+COMPOSE_PROFILES=voice make stop-server
+```
+
+coturn 另需開放／轉發 `3478` TCP+UDP 及 `49160–49200` UDP；既有 `--forward` 腳本不會替你配置這些 TURN 端口。
 
 > **Port 與網址提醒**：只有 `80` (http) / `443` (https) 可以省略 port。用 8213 時網址一定要打 port，例如 `http://<公網IP或DDNS>:8213`。另外語音麥克風需要 **HTTPS**，用純 HTTP 玩時遠端語音會不可用，建議之後加反向代理（如 Caddy）走 443。
 
@@ -240,7 +202,7 @@ natpmpc -g 192.168.0.1 -a 8213 8213 tcp 604800
 1. 編輯 `Caddyfile`，改成你嘅 DDNS／域名：
    `mcslimeserver.ddnsgeek.com { reverse_proxy now-game:3000 }`
 2. 確保路由器已把 **80 同 443** 轉發到本機（NAT-PMP 腳本已預設包含：`./scripts/docker-boot.sh --forward`）。
-3. 啟動：`docker compose up -d`；用 `docker compose logs -f caddy` 睇簽證進度（成功會見 `certificate obtained successfully`）。
+3. 啟動：`make deploy`；用 `docker compose logs -f caddy` 睇簽證進度（成功會見 `certificate obtained successfully`）。
 4. 於 `.env` 設定 `ORIGIN=https://<你的DDNS域名>`（可同時保留 http 版本）。
 
 > **為何要 HTTPS？** `crypto.randomUUID()` 同麥克風（`getUserMedia`）只喺安全來源（HTTPS / localhost）可用。
@@ -299,13 +261,13 @@ Render 免費實例閒置後會休眠，重新啟動或重新部署會清空記�
 
 ## 測試驗證指令
 
-```powershell
+```bash
 # 型別驗證
-npm run check
+make check
 
 # 單元與協定測試 (TAP 格式輸出)
-npm test
+make test
 
 # 端到端瀏覽器測試 (Playwright Chromium)
-npm run test:e2e
+make test-e2e
 ```

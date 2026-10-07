@@ -13,7 +13,23 @@ COPY public/ ./public/
 
 RUN npm run build
 
-# Stage 2: Production runtime image
+# Docker-only development and test image; Debian supports Playwright dependencies.
+FROM node:24-bookworm-slim AS development
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json tsconfig.server.json vite.config.ts playwright.config.ts index.html ./
+COPY src/ ./src/
+COPY public/ ./public/
+COPY tests/ ./tests/
+COPY scripts/ ./scripts/
+COPY DESIGN.md ./
+RUN npm run build && chown node:node /app
+USER node
+CMD ["npm", "run", "start"]
+
+# Production runtime image
 FROM node:24-alpine AS runner
 
 WORKDIR /app

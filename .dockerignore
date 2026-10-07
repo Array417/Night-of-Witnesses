@@ -7,5 +7,6 @@ blob-report
 .gitignore
 .codegraph
 .omo
-tests
+.env
+.env.*
 *.log

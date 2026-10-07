@@ -1,39 +1,47 @@
-.PHONY: help install check test build start build-start stop test-e2e test-manual
+.PHONY: help install check test build start build-start stop deploy stop-server test-e2e test-manual
+
+DEV_COMPOSE := docker compose -p night-of-witnesses-dev -f compose.dev.yml
 
 help:
-	@echo "make install      Install dependencies (npm ci)"
-	@echo "make check        Check TypeScript types"
-	@echo "make test         Run unit and integration tests"
-	@echo "make build        Build Docker Compose images"
-	@echo "make start        Start game, Caddy and coturn (requires TURN settings)"
-	@echo "make build-start  Build and start all Docker Compose services"
-	@echo "make stop         Remove service containers, preserving volumes"
-	@echo "make test-e2e     Run browser tests"
-	@echo "make test-manual  Open the manual test"
+	@echo "make start        Build and start local Docker Dev at localhost:3000"
+	@echo "make build-start  Alias for make start"
+	@echo "make stop         Stop Dev and remove its containers and image"
+	@echo "make build        Build the Docker Dev image (includes dependencies)"
+	@echo "make install      Alias for make build"
+	@echo "make check        Check TypeScript types inside Docker"
+	@echo "make test         Run unit and integration tests inside Docker"
+	@echo "make test-e2e     Install Chromium and run browser tests inside Docker"
+	@echo "make test-manual  Start Docker Dev for manual browser testing"
+	@echo "make deploy       Run scripts/docker-boot.sh (macOS/Colima)"
+	@echo "make stop-server  Run scripts/docker-boot.sh --stop"
 
-install:
-	npm ci
+install: build
 
-check:
-	npm run check
+check: build
+	$(DEV_COMPOSE) run --rm --no-deps dev npm run check
 
-test:
-	npm test
+test: build
+	$(DEV_COMPOSE) run --rm --no-deps dev npm test
 
 build:
-	docker compose --profile voice build
+	$(DEV_COMPOSE) build
 
 start:
-	docker compose --profile voice up -d --wait
+	$(DEV_COMPOSE) up -d --build --wait
 
-build-start:
-	docker compose --profile voice up -d --build --wait
+build-start: start
 
 stop:
-	docker compose --profile voice down
+	$(DEV_COMPOSE) down --rmi all
 
-test-e2e:
-	npm run test:e2e
+deploy:
+	./scripts/docker-boot.sh
 
-test-manual:
-	npm run test:manual
+stop-server:
+	./scripts/docker-boot.sh --stop
+
+test-e2e: build
+	$(DEV_COMPOSE) run --rm --no-deps --user root dev sh -c "npm exec -- playwright install --with-deps chromium && npm run test:e2e"
+
+test-manual: start
+	@echo "Open http://localhost:3000 in three browser windows for manual testing."

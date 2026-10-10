@@ -12,6 +12,11 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
 EXTERNAL_PORT="${EXTERNAL_PORT:-8213}"
+# Colima port forwarder：grpc 支援 UDP（自建 TURN 需要），但有已知隨機失效 bug
+# （abiosoft/colima#1376：容器健康但 host 由非 loopback 連 mapped port 會 hang）。
+# 策略：預設用 grpc；偵測到失效就自動退回 ssh。
+PORT_FORWARDER="${PORT_FORWARDER:-grpc}"
+COLIMA_CONFIG="${HOME}/.colima/default/colima.yaml"
 SUPPORT_DIR="${HOME}/Library/Application Support/NightOfWitnesses"
 LAUNCH_AGENT="${HOME}/Library/LaunchAgents/com.nightofwitnesses.natpmp.plist"
 AGENT_LABEL="com.nightofwitnesses.natpmp"
@@ -56,6 +61,42 @@ ensure_docker_daemon() {
   # 最後手段：只喺本次執行用環境變數，唔改動全域設定。
   export DOCKER_HOST="unix://${COLIMA_SOCKET}"
   docker info >/dev/null 2>&1
+}
+
+# --- Colima port forwarder 保護（見頂部 PORT_FORWARDER 說明）---
+# 讀取 Colima 現用 port forwarder（grpc / ssh / none）
+colima_port_forwarder() {
+  [[ -f "${COLIMA_CONFIG}" ]] || return 0
+  grep -m1 '^[[:space:]]*portForwarder:' "${COLIMA_CONFIG}" 2>/dev/null \
+    | sed -E 's/^[^:]*:[[:space:]]*//' || true
+}
+
+# 等服務喺 loopback 通過健康檢查（最多 30 秒）
+wait_for_loopback_health() {
+  local i
+  for i in $(seq 1 30); do
+    curl -fsS "http://127.0.0.1:${EXTERNAL_PORT}/healthz" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# 由【非 loopback】位址探測：loopback 通但呢度唔通 = port forwarder 失效
+lan_forward_works() {
+  local ip="$1" i
+  [[ -n "${ip}" ]] || return 1
+  for i in $(seq 1 8); do
+    curl -fsS --max-time 3 "http://${ip}:${EXTERNAL_PORT}/healthz" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+switch_colima_forwarder() {
+  local mode="$1"
+  echo "[boot] 重啟 Colima 並切換 port forwarder → ${mode}（容器會自動回復）…"
+  colima stop >/dev/null 2>&1 || true
+  colima start --port-forwarder="${mode}"
 }
 
 install_natpmp_agent() {
@@ -124,10 +165,10 @@ esac
 
 echo "[boot] 檢查 Colima（Docker Linux VM）狀態…"
 if ! colima status >/dev/null 2>&1; then
-  echo "[boot] 未啟動，正在啟動 Colima…"
-  colima start
+  echo "[boot] 未啟動，正在啟動 Colima（port forwarder: ${PORT_FORWARDER}）…"
+  colima start --port-forwarder="${PORT_FORWARDER}"
 else
-  echo "[boot] Colima 已在運行。"
+  echo "[boot] Colima 已在運行（port forwarder: $(colima_port_forwarder)）。"
 fi
 
 if ! ensure_docker_daemon; then
@@ -167,20 +208,43 @@ unset COMPOSE_CONFIG
 docker compose ${COMPOSE_ARGS[@]+"${COMPOSE_ARGS[@]}"} up -d --build
 
 echo "[boot] 等待健康檢查…"
-for i in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${EXTERNAL_PORT}/healthz" >/dev/null 2>&1; then
-    echo "[boot] 服務已就緒。"
-    echo "[boot] 本地網址: http://localhost:${EXTERNAL_PORT}"
-    LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || true)"
-    if [[ -n "${LAN_IP}" ]]; then
-      echo "[boot] 區網網址: http://${LAN_IP}:${EXTERNAL_PORT}"
-    fi
-    echo "[boot] 互聯網:   http://<你的公網IP或DDNS>:${EXTERNAL_PORT}（需先在路由器設定 port forwarding）"
-    exit 0
-  fi
-  sleep 1
-done
+if ! wait_for_loopback_health; then
+  echo "[boot] 錯誤：服務逾時未通過健康檢查。最近日誌：" >&2
+  docker compose logs --tail=50 >&2
+  exit 1
+fi
 
-echo "[boot] 錯誤：服務逾時未通過健康檢查。最近日誌：" >&2
-docker compose logs --tail=50 >&2
-exit 1
+# 偵測 Colima port forwarder 失效：loopback 通，但由區網位址連唔到。
+LAN_IP="$(ipconfig getifaddr en0 2>/dev/null || true)"
+if [[ -n "${LAN_IP}" ]] && ! lan_forward_works "${LAN_IP}"; then
+  CURRENT_FWD="$(colima_port_forwarder)"
+  if [[ "${CURRENT_FWD}" == "ssh" ]]; then
+    echo "[boot] 警告：區網 ${LAN_IP}:${EXTERNAL_PORT} 仍然連唔到，請手動檢查 Colima。" >&2
+  else
+    echo "[boot] 偵測到 Colima '${CURRENT_FWD:-未知}' port forwarder 失效（loopback 通、區網唔通），自動改用 ssh…"
+    switch_colima_forwarder ssh
+    if ! ensure_docker_daemon; then
+      echo "[boot] 錯誤：切換 forwarder 後仍連唔到 Docker daemon。" >&2
+      exit 1
+    fi
+    docker compose ${COMPOSE_ARGS[@]+"${COMPOSE_ARGS[@]}"} up -d
+    if ! wait_for_loopback_health; then
+      echo "[boot] 錯誤：切換 forwarder 後服務未通過健康檢查。" >&2
+      docker compose logs --tail=50 >&2
+      exit 1
+    fi
+    if lan_forward_works "${LAN_IP}"; then
+      echo "[boot] 已改用 ssh forwarder，區網連線正常（注意：ssh 唔支援 UDP，TURN 會自動改用 TCP）。"
+    else
+      echo "[boot] 警告：切換後區網仍連唔到，請手動檢查 Colima。" >&2
+    fi
+  fi
+fi
+
+echo "[boot] 服務已就緒。"
+echo "[boot] 本地網址: http://localhost:${EXTERNAL_PORT}"
+if [[ -n "${LAN_IP}" ]]; then
+  echo "[boot] 區網網址: http://${LAN_IP}:${EXTERNAL_PORT}"
+fi
+echo "[boot] 互聯網:   http://<你的公網IP或DDNS>:${EXTERNAL_PORT}（需先在路由器設定 port forwarding）"
+exit 0

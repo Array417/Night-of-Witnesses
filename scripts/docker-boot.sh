@@ -130,7 +130,8 @@ else
   echo "[boot] 未設定自建 TURN；跨網絡語音需於 RTC_ICE_SERVERS_JSON 設定可用的外部 TURN。"
 fi
 unset COMPOSE_CONFIG
-docker compose "${COMPOSE_ARGS[@]}" up -d --build
+# 以 ${arr[@]+...} 展開：相容 macOS 內建 bash 3.2 的 set -u（空陣列展開會被視為未設定變數）
+docker compose ${COMPOSE_ARGS[@]+"${COMPOSE_ARGS[@]}"} up -d --build
 
 echo "[boot] 等待健康檢查…"
 for i in $(seq 1 30); do

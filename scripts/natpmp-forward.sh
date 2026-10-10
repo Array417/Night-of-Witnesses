@@ -7,7 +7,8 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH}"
 
 # 要對外開放的 port（空白分隔）。80/443 供 Caddy HTTPS，8213 供直接 HTTP。
-PORTS="${PORTS:-8213 80 443}"
+PORTS="${PORTS:-8213 80 443 3478}"
+UDP_PORTS="${UDP_PORTS:-3478 $(seq 49160 49200 | tr '\n' ' ')}"
 PROTOCOL="${PROTOCOL:-tcp}"          # tcp / udp
 LIFETIME="${LIFETIME:-604800}"       # 7 日，逾時前自動續期
 
@@ -28,14 +29,17 @@ if [[ -z "${GATEWAY}" ]]; then
 fi
 
 STATUS=0
-for PORT in ${PORTS}; do
-  OUT="$(natpmpc -g "${GATEWAY}" -a "${PORT}" "${PORT}" "${PROTOCOL}" "${LIFETIME}" 2>&1 || true)"
-  echo "[natpmp $(date '+%Y-%m-%d %H:%M:%S')] gateway=${GATEWAY} ${PROTOCOL} 對外 ${PORT} -> 本機 ${PORT}"
+map_port() {
+  local PORT="$1" MAPPING_PROTOCOL="$2" OUT
+  OUT="$(natpmpc -g "${GATEWAY}" -a "${PORT}" "${PORT}" "${MAPPING_PROTOCOL}" "${LIFETIME}" 2>&1 || true)"
+  echo "[natpmp $(date '+%Y-%m-%d %H:%M:%S')] gateway=${GATEWAY} ${MAPPING_PROTOCOL} 對外 ${PORT} -> 本機 ${PORT}"
   echo "${OUT}"
-  if ! echo "${OUT}" | grep -q 'Mapped public port'; then
+  if ! echo "${OUT}" | grep -qE "Mapped public port ${PORT}([[:space:]]|$)"; then
     echo "[natpmp] 錯誤：port ${PORT} 未成功建立轉發。" >&2
     STATUS=1
   fi
-done
+}
+for PORT in ${PORTS}; do map_port "${PORT}" "${PROTOCOL}"; done
+for PORT in ${UDP_PORTS}; do map_port "${PORT}" udp; done
 
 exit "${STATUS}"

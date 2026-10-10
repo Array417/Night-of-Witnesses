@@ -33,7 +33,7 @@ export default defineConfig({
       TURN_SHARED_SECRET: process.env.TURN_TEST_SECRET ?? process.env.TURN_SHARED_SECRET ?? '',
     },
     command: process.env.PLAYWRIGHT_SERVER_CMD || 'npm run start',
-    url: 'http://127.0.0.1:3000/healthz',
+    url: `${process.env.BASE_URL || 'http://127.0.0.1:3000'}/healthz`,
     reuseExistingServer: !process.env.CI,
     timeout: 30000,
   },

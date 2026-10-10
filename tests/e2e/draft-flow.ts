@@ -56,6 +56,8 @@ export function guestRoomTarget(page: Page): Locator {
 
 /** Opens one hand card's detail dialog and arms it for passing. */
 export async function armCard(page: Page, index = 0): Promise<void> {
+  await drawHand(page);
+  await closeGameMenu(page);
   await expect(handCards(page)).toHaveCount(2);
   await handCards(page).nth(index).locator('[data-action="view-card"]').click();
   await expect(page.locator(CARD_DETAIL_DIALOG)).toBeVisible();
@@ -63,7 +65,24 @@ export async function armCard(page: Page, index = 0): Promise<void> {
   await expect(page.locator(CARD_DETAIL_DIALOG)).toBeHidden();
 }
 
-/** Confirms the mandatory claim dialog; `role === undefined` keeps 「不特別聲明」. */
+/** Draw remaining cards through the same per-card UI used by players. */
+export async function drawHand(page: Page): Promise<void> {
+  const wasOpen = await page.locator(GAME_MENU).getAttribute('data-state') === 'open';
+  await closeGameMenu(page);
+  await expect.poll(async () => {
+    const projection = await page.evaluate(() => window.__NOW__!.client.getProjection()!);
+    return projection.currentActorId === projection.viewerId && !projection.cardMotion;
+  }).toBe(true);
+  while ((await handCards(page).count()) < 2) {
+    const count = await handCards(page).count();
+    await expect(page.locator('#draw-pile')).toBeEnabled();
+    await page.locator('#draw-pile').click();
+    await expect(handCards(page)).toHaveCount(count + 1);
+  }
+  if (wasOpen) await openGameMenu(page);
+}
+
+/** Confirms the mandatory claim dialog; the first public role is selected by default. */
 export async function confirmClaim(page: Page, role?: string): Promise<void> {
   await expect(page.locator(CLAIM_DIALOG)).toBeVisible();
   if (role !== undefined && role !== '') {
@@ -77,6 +96,10 @@ export async function passToFirstEligible(page: Page, role?: string): Promise<vo
   await armCard(page);
   await firstSeatTarget(page).click();
   await confirmClaim(page, role);
+  await expect.poll(async () => await page.evaluate(() => {
+    const projection = window.__NOW__!.client.getProjection()!;
+    return projection.currentActorId !== projection.viewerId;
+  })).toBe(true);
 }
 
 /** Full non-drag flow for the final actor: leftover card goes to the Guest Room. */
@@ -84,6 +107,7 @@ export async function passToGuestRoom(page: Page, role?: string): Promise<void> 
   await armCard(page);
   await guestRoomTarget(page).click();
   await confirmClaim(page, role);
+  await expect.poll(async () => await page.evaluate(() => window.__NOW__!.client.getProjection()!.phase)).toBe('discussion');
 }
 
 export interface StartedRoom {
@@ -93,6 +117,7 @@ export interface StartedRoom {
 }
 
 export interface StartRoomOptions {
+  readonly drawFirstHand?: boolean;
   readonly viewport?: { readonly width: number; readonly height: number };
   /** Runs before navigation so `page.routeWebSocket` can intercept the first socket. */
   readonly onPage?: (page: Page, index: number) => Promise<void>;
@@ -145,6 +170,7 @@ export async function startRoom(
   await startButton.click();
   // The table surface is visible on every viewport; menu panels may live in a closed drawer.
   for (const page of pages) await expect(page.locator('.table-panel')).toBeVisible();
+  if (options.drawFirstHand !== false) await drawHand(host);
   return { pages, contexts, roomCode: code };
 }
 

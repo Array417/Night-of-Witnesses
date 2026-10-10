@@ -18,6 +18,10 @@ UDP 與 TCP 中繼均使用 3478；此版本不新增 TURN TLS。禁止 3478 的
 
 ## 驗收
 
+2026-10-11 更新：移除 coturn 映像不接受、會導致容器直接退出的 `--no-dtls` 參數。`scripts/docker-boot.sh` 在三個自建 TURN 設定齊全時會自動啟動 `voice` profile；NAT-PMP 續期腳本亦會映射 3478 TCP/UDP 和 49160–49200 UDP，並檢查外部端口與要求相同。仍須確認主機防火牆放行、路由器支援映射，以及部署主機有可達公網 IP。
+
+客戶端在 ICE 失敗或持續斷線 5 秒後，由固定的邀請端重新協商 ICE，保留已啟用的麥克風音軌；連續失敗最多重試兩次。沒有 TURN 設定時，重試仍不能解決限制 NAT 的跨網絡連線。若網絡封鎖 3478，可於 `RTC_ICE_SERVERS_JSON` 提供已配置 TLS 的外部 `turns:主機:443?transport=tcp`；現有 Caddy 的 HTTPS 443 本身不提供 TURN TLS。
+
 1. 用 HTTPS 建立 3 人房間；至少一人使用手機流動數據，另一人使用 Wi-Fi。
 2. 到討論階段，在 Menu 開 mic；其他人保持 mic 關閉也應聽到聲音。
 3. 若播放被阻擋，從 Menu 按「開啟語音播放」。

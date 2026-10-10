@@ -9,6 +9,7 @@ import { attachWebSocketServer } from '../../src/server/socket.ts';
 import { RoomManager } from '../../src/server/rooms.ts';
 import type { ServerMessage, ClientMessage } from '../../src/shared/protocol.ts';
 import type { PlayerProjection } from '../../src/shared/state.ts';
+import { randomUUID } from 'node:crypto';
 
 describe('authoritative wire journeys and recovery contracts', () => {
   let server: http.Server;
@@ -140,6 +141,31 @@ describe('authoritative wire journeys and recovery contracts', () => {
     });
   }
 
+  async function drawHand(client: TestClient): Promise<void> {
+    while ((client.lastProjection?.ownCards?.length ?? 0) < 2) {
+      const count = client.lastProjection?.ownCards?.length ?? 0;
+      client.send({ type: 'draw_card', actionId: randomUUID(), baseVersion: client.lastProjection!.version });
+      await client.waitFor(m => m.type === 'projection' && m.projection.cardMotion?.kind === 'draw' && (m.projection.ownCards?.length ?? 0) === count + 1);
+      simulatedTime += 1000;
+      await client.waitFor(m => m.type === 'projection' && !m.projection.cardMotion);
+    }
+  }
+
+  async function finishPass(client: TestClient): Promise<void> {
+    const frame = await client.waitFor(m => m.type === 'projection' && m.projection.cardMotion?.kind === 'pass' && (m.projection.cardMotion.toPlayerId === client.playerId || m.projection.cardMotion.fromPlayerId === client.playerId));
+    simulatedTime += 1000;
+    if (frame.type === 'projection' && frame.projection.cardMotion?.toPlayerId !== null) {
+      await client.waitFor(m => m.type === 'projection' && !m.projection.cardMotion);
+    }
+  }
+
+  async function receivePass(client: TestClient): Promise<void> {
+    await finishPass(client);
+    assert.equal(client.lastProjection!.currentActorId, client.playerId);
+    assert.equal(client.lastProjection!.ownCards!.length, 1);
+    await drawHand(client);
+  }
+
   test('three-client L1 complete round: create, draft, vote, result, canary check, and rematch', async () => {
     const c1 = await createTestClient('Alice');
     const c2 = await createTestClient('Bob');
@@ -222,6 +248,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       c3.waitFor((m) => m.type === 'projection' && m.projection.phase === 'draft'),
     ]);
 
+    await drawHand(c1);
     // CANARY CHECK 1: Only active actor (Alice) gets ownCards. Bob and Charlie must have undefined ownCards.
     assert.ok(c1.lastProjection!.ownCards);
     assert.equal(c1.lastProjection!.ownCards!.length, 2);
@@ -242,7 +269,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       testimonyRole: 'guest',
     });
 
-    await c2.waitFor((m) => m.type === 'projection' && m.projection.currentActorId === c2.playerId);
+    await receivePass(c2);
 
     // Bob has 2 cards
     const bobCards = c2.lastProjection?.ownCards;
@@ -263,7 +290,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       passToPlayerId: c3.playerId!,
     });
 
-    await c3.waitFor((m) => m.type === 'projection' && m.projection.currentActorId === c3.playerId);
+    await receivePass(c3);
 
     // Charlie is final player
     const charlieCards = c3.lastProjection?.ownCards;
@@ -279,6 +306,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       keepCardId: charlieKeeps.id,
     });
 
+    await finishPass(c3);
     // All transition to discussion phase
     await Promise.all([
       c1.waitFor((m) => m.type === 'projection' && m.projection.phase === 'discussion'),
@@ -497,6 +525,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       c4.waitFor((m) => m.type === 'projection' && m.projection.phase === 'draft'),
     ]);
 
+    await drawHand(c1);
     // Run 4-player draft
     const c1Cards = c1.lastProjection!.ownCards!;
     c1.send({
@@ -506,7 +535,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       keepCardId: c1Cards[0].id,
       passToPlayerId: c2.playerId!,
     });
-    await c2.waitFor((m) => m.type === 'projection' && m.projection.currentActorId === c2.playerId);
+    await receivePass(c2);
 
     const c2Cards = c2.lastProjection!.ownCards!;
     c2.send({
@@ -516,7 +545,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       keepCardId: c2Cards[0].id,
       passToPlayerId: c3.playerId!,
     });
-    await c3.waitFor((m) => m.type === 'projection' && m.projection.currentActorId === c3.playerId);
+    await receivePass(c3);
 
     const c3Cards = c3.lastProjection!.ownCards!;
     c3.send({
@@ -526,7 +555,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       keepCardId: c3Cards[0].id,
       passToPlayerId: c4.playerId!,
     });
-    await c4.waitFor((m) => m.type === 'projection' && m.projection.currentActorId === c4.playerId);
+    await receivePass(c4);
 
     const c4Cards = c4.lastProjection!.ownCards!;
     c4.send({
@@ -535,6 +564,7 @@ describe('authoritative wire journeys and recovery contracts', () => {
       baseVersion: c4.lastProjection!.version,
       keepCardId: c4Cards[0].id,
     });
+    await finishPass(c4);
 
     await Promise.all([
       c1.waitFor((m) => m.type === 'projection' && m.projection.phase === 'discussion'),

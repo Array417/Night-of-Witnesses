@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { RoomManager } from '../../src/server/rooms.ts';
+import { prepareRoomHand } from '../helpers/draft.ts';
 import { createServerInstance } from '../../src/server/http.ts';
 import { attachWebSocketServer } from '../../src/server/socket.ts';
 import { clientMessageSchema, serverMessageSchema } from '../../src/shared/protocol.ts';
@@ -29,6 +30,7 @@ function driveToDiscussion(manager: RoomManager, roomCode: string, ids: string[]
     baseVersion: manager.getRoom(roomCode)!.state.version,
   });
   for (let i = 0; i < ids.length; i++) {
+    prepareRoomHand(manager, roomCode);
     const room = manager.getRoom(roomCode)!;
     const actor = room.state.currentActorId!;
     const cards = room.state.pendingCards[actor];
@@ -41,6 +43,7 @@ function driveToDiscussion(manager: RoomManager, roomCode: string, ids: string[]
       ...(nextP ? { passToPlayerId: nextP } : {}),
     } as never);
   }
+  prepareRoomHand(manager, roomCode);
   assert.equal(manager.getRoom(roomCode)!.state.phase, 'discussion');
 }
 

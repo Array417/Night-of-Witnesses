@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createGame, reduceGame, type GameAction } from '../shared/game.ts';
+import { createGame, reduceGame, finishCardMotion, type GameAction } from '../shared/game.ts';
 import type { CanonicalGameState, PlayerProjection } from '../shared/state.ts';
 import {
   DISCUSSION_DEADLINE_MS,
@@ -348,6 +348,7 @@ export class RoomManager {
     // 3. Execute authoritative reducer with seat's playerId
     try {
       const gameAction = { ...action, playerId } as GameAction;
+      if (gameAction.type === 'draw_card' || gameAction.type === 'choose_and_pass') gameAction.now = this.getTime();
       if (gameAction.type === 'start_game' && this.getSeed && !gameAction.seed) {
         gameAction.seed = this.getSeed(roomCode, 'start');
       } else if (gameAction.type === 'rematch' && this.getSeed && !gameAction.nextSeed) {
@@ -380,6 +381,19 @@ export class RoomManager {
   }
 
   /** Explicit lobby departure revokes the seat immediately, unlike reconnectable disconnects. */
+  checkAllCardMotions(): string[] {
+    const changed: string[] = [];
+    const now = this.getTime();
+    for (const room of this.rooms.values()) {
+      const next = finishCardMotion(room.state, now);
+      if (next !== room.state) {
+        room.state = next;
+        changed.push(room.code);
+      }
+    }
+    return changed;
+  }
+
   leaveRoom(roomCode: string, playerId: string): void {
     const room = this.rooms.get(roomCode.toUpperCase());
     const seat = room?.seats.get(playerId);
@@ -490,6 +504,8 @@ export class RoomManager {
       room.state.currentActorId = null;
       room.state.servedPlayerIds = [];
       room.state.pendingCards = {};
+      room.state.drawPileIndex = 0;
+      room.state.cardMotion = null;
       room.state.keptRoles = {};
       room.state.guestRoomCard = null;
       clearDiscussion(room.state);

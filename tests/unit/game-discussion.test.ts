@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createGame, reduceGame } from '../../src/shared/game.ts';
+import { createGame } from '../../src/shared/game.ts';
+import { reducePreparedGame as reduceGame } from '../helpers/draft.ts';
 import { RulesError } from '../../src/shared/rules.ts';
 import type { CanonicalGameState } from '../../src/shared/state.ts';
 

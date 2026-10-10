@@ -1,6 +1,6 @@
 /**
  * Shared active-game table: the canonical clockwise ring from `getTableSeats`,
- * one generic back per opponent, the viewer's hand slot, the action dock, and a
+ * actual opponent hand counts, the viewer's hand slot, the action dock, and a
  * final-actor-only Guest Room target at the table centre.
  *
  * Selection state stays with the caller. This module renders state and, for
@@ -14,6 +14,7 @@ import { getTableSeats } from './game-seating.ts';
 import { renderOpponentBack, renderOwnCard } from './game-cards.ts';
 import { wireCardDrag } from './card-drag.ts';
 import { locationArt } from './card-art.ts';
+import { renderCardMotion } from './game-motion.ts';
 
 export interface GameTableOptions {
   projection: PlayerProjection;
@@ -25,6 +26,7 @@ export interface GameTableOptions {
   onSelectGuestRoom?: () => void;
   /** Phase controls (discussion/voting) rendered by the shell into the dock. */
   renderPhaseActions?: (host: HTMLElement) => void;
+  onDrawCard?: () => void;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -41,7 +43,7 @@ function seatStateText(isActive: boolean, isServed: boolean, isOffline: boolean)
 }
 
 export function renderGameTable(options: GameTableOptions): HTMLElement {
-  const { projection, onSelectRecipient, onDropCard, onSelectGuestRoom, renderPhaseActions } =
+  const { projection, onSelectRecipient, onDropCard, onSelectGuestRoom, renderPhaseActions, onDrawCard } =
     options;
   const isViewerActor = projection.currentActorId === projection.viewerId;
   const isFinalActor =
@@ -100,8 +102,8 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
     const seatLabel = `${player.playerName}，地點：${locationLabel}，狀態：${stateText}`;
 
     const seatChildren: (Node | string)[] = [
-      ...(player.locationId ? [locationArt(player.locationId, 'seat-location-art')] : []),
       el('span', { class: 'seat-name' }, [player.playerName + (isViewer ? ' (我)' : '')]),
+      ...(player.locationId ? [locationArt(player.locationId, 'seat-location-art')] : []),
       el('span', { class: 'seat-location' }, [locationLabel]),
       el('span', { class: 'seat-state' }, [stateText]),
     ];
@@ -114,7 +116,9 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
       );
     }
     if (!isViewer) {
-      seatChildren.push(el('div', { class: 'seat-card' }, [renderOpponentBack()]));
+      const incoming = projection.cardMotion?.toPlayerId === player.playerId ? 1 : 0;
+      const count = Math.max(0, (player.handCount ?? 0) - incoming);
+      if (count > 0) seatChildren.push(el('div', { class: 'seat-card', 'data-hand-count': String(count) }, Array.from({ length: count }, () => renderOpponentBack())));
     }
 
     let target: HTMLButtonElement | null = null;
@@ -169,7 +173,20 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
     seatsContainer,
   ];
 
-  if (isFinalActor) {
+  if (projection.phase === 'draft') {
+    const canDraw = isViewerActor && !projection.cardMotion && (projection.ownCards?.length ?? 0) < 2 && (projection.drawPileCount ?? 0) > 0;
+    const pile = el('button', {
+      id: 'draw-pile', type: 'button', class: 'draw-pile', disabled: !canDraw,
+      'aria-label': `抽一張卡牌，牌堆剩餘 ${projection.drawPileCount ?? 0} 張`,
+    }, [renderOpponentBack(), el('span', { class: 'draw-pile-label' }, [`牌堆 · ${projection.drawPileCount ?? 0}`])]);
+    if (canDraw && onDrawCard) {
+      pile.addEventListener('click', onDrawCard);
+      wireCardDrag(pile, tablePanel, () => onDrawCard(), '.hand-slot, .seat[aria-current="true"]');
+    }
+    ringChildren.push(pile);
+  }
+
+  if (isFinalActor && !projection.cardMotion && (projection.ownCards?.length ?? 0) === 2) {
     const guestRoom = el(
       'button',
       {
@@ -192,13 +209,16 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
     el('div', { class: 'table-ring' }, ringChildren),
   ]);
 
-  const ownCards = projection.ownCards ?? [];
-  if (ownCards.length > 0) {
+  const movingCardId = projection.cardMotion?.card?.id;
+  const ownCards = (projection.ownCards ?? (projection.ownRole ? [projection.ownRole] : []))
+    .filter(card => card.id !== movingCardId);
+  {
     const handSlot = el('div', { class: 'hand-slot', role: 'group', 'aria-label': '我的手牌' });
-    ownCards.forEach((card, index) => {
+    if (ownCards.length === 0) handSlot.appendChild(el('span', { class: 'hand-empty' }, ['我的手牌']));
+    ownCards.forEach((card) => {
       const cardElement = renderOwnCard(card, {
-        kicker: `手牌 ${index + 1}`,
-        actionHint: '點擊保留 / 拖曳傳遞',
+        compact: true,
+        passable: isViewerActor && !projection.cardMotion && ownCards.length === 2,
       });
       if (isViewerActor && projection.phase === 'draft' && ownCards.length === 2 && onDropCard) {
         wireCardDrag(cardElement, tablePanel, target => {
@@ -212,6 +232,7 @@ export function renderGameTable(options: GameTableOptions): HTMLElement {
   }
 
   tablePanel.appendChild(stage);
+  renderCardMotion(stage, projection);
 
   const dock = el('div', { class: 'table-action-dock', 'aria-label': '桌面操作列' });
   if (renderPhaseActions) {

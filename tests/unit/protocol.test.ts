@@ -178,6 +178,7 @@ function assertExhaustiveClientMessage(msg: ClientMessage): void {
     case 'set_ready':
     case 'select_level':
     case 'start_game':
+    case 'draw_card':
     case 'choose_and_pass':
     case 'advance_to_vote':
     case 'butler_peek':

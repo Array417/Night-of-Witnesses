@@ -167,6 +167,7 @@ export function renderGame(
   const draft =
     projection.phase === 'draft' &&
     projection.currentActorId === projection.viewerId &&
+    !projection.cardMotion &&
     (projection.ownCards?.length ?? 0) === 2
       ? createDraftCoordinator({
           root: container,
@@ -183,6 +184,11 @@ export function renderGame(
     onSelectRecipient: draft?.onSelectRecipient,
     onDropCard: draft?.onDropCard,
     onSelectGuestRoom: draft?.onSelectGuestRoom,
+    onDrawCard: () => {
+      const accepted = client.dispatchAction({ type: 'draw_card' });
+      const pile = container.querySelector<HTMLButtonElement>('#draw-pile');
+      if (accepted && pile) pile.disabled = true;
+    },
     renderPhaseActions: (host) => {
       if (projection.phase === 'discussion') {
         renderDiscussionAction(host, projection, client);

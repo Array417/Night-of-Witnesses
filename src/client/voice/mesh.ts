@@ -42,6 +42,7 @@ export class VoiceMesh {
   private iceServers: RTCIceServer[] = [];
   private outputVolume = 0.8;
   private localTrack: MeshAudioTrack | null = null;
+  private selfId: string | null = null;
 
   constructor(events: VoiceMeshEvents, options: VoiceMeshOptions = {}) {
     this.events = events;
@@ -69,6 +70,7 @@ export class VoiceMesh {
   }
 
   syncPeers(selfId: string, peerIds: readonly string[]): void {
+    this.selfId = selfId;
     const wanted = [...new Set(peerIds)]
       .filter((id) => id !== selfId)
       .sort()
@@ -149,6 +151,7 @@ export class VoiceMesh {
       const peer = new VoicePeer(peerId, connection, {
         events: this.peerEvents,
         createSink: this.createAudioSink,
+        offerer: this.selfId !== null && isOfferer(this.selfId, peerId),
       });
       peer.setVolume(this.outputVolume);
       void peer.setLocalTrack(this.localTrack).catch(() => {});

@@ -6,7 +6,7 @@ export function disposeCardDrag(): void {
   activeCleanup = null;
 }
 
-export function wireCardDrag(card: HTMLElement, root: HTMLElement, drop: (target: HTMLElement) => void): void {
+export function wireCardDrag(card: HTMLElement, root: HTMLElement, drop: (target: HTMLElement) => void, targetSelector = '.seat.is-eligible, .guest-room-target'): void {
   card.dataset.pointerDraggable = 'true';
   card.draggable = false;
   let suppressClickUntil = 0;
@@ -19,7 +19,8 @@ export function wireCardDrag(card: HTMLElement, root: HTMLElement, drop: (target
   card.addEventListener('pointerdown', event => {
     // A new deliberate press must not be swallowed by the previous drag's ghost-click guard.
     suppressClickUntil = 0;
-    if (!event.isPrimary || event.button !== 0 || (event.target as Element).closest('button')) return;
+    const button = (event.target as Element).closest('button');
+    if (!event.isPrimary || event.button !== 0 || (button && button !== card)) return;
     disposeCardDrag();
     const pointerId = event.pointerId;
     const startX = event.clientX;
@@ -29,7 +30,7 @@ export function wireCardDrag(card: HTMLElement, root: HTMLElement, drop: (target
     let placeholder: HTMLElement | null = null;
     let dragging = false;
     let target: HTMLElement | null = null;
-    const targets = [...root.querySelectorAll<HTMLElement>('.seat.is-eligible, .guest-room-target')];
+    const targets = [...root.querySelectorAll<HTMLElement>(targetSelector)];
     function finish(cancelled = true): void {
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);

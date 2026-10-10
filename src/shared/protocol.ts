@@ -101,6 +101,7 @@ export const playerProjectionSchema = z.object({
       locationId: playerLocationSchema.nullable(),
       isHost: z.boolean(),
       hasVoted: z.boolean().optional(),
+      handCount: z.number().int().min(0).max(2).optional(),
     })
   ),
   publicRoleRoster: z.array(roleIdSchema),
@@ -113,6 +114,13 @@ export const playerProjectionSchema = z.object({
       testimonyRole: roleIdSchema.optional(),
     })
   ),
+  drawPileCount: z.number().int().nonnegative().optional(),
+  serverTime: z.number().optional(),
+  cardMotion: z.object({
+    id: z.string(), kind: z.enum(['draw', 'pass']),
+    fromPlayerId: z.string().nullable(), toPlayerId: z.string().nullable(),
+    startedAt: z.number(), endsAt: z.number(), card: cardSchema.optional(),
+  }).nullable().optional(),
   ownCards: z.array(cardSchema).optional(),
   ownRole: cardSchema.optional(),
   ownBallot: playerLocationSchema.optional(),
@@ -169,6 +177,12 @@ const selectLevelSchema = z.object({
 
 const startGameSchema = z.object({
   type: z.literal('start_game'),
+  actionId: z.string().uuid(),
+  baseVersion: z.number().int().nonnegative(),
+});
+
+const drawCardSchema = z.object({
+  type: z.literal('draw_card'),
   actionId: z.string().uuid(),
   baseVersion: z.number().int().nonnegative(),
 });
@@ -250,6 +264,7 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
   setReadySchema,
   selectLevelSchema,
   startGameSchema,
+  drawCardSchema,
   chooseAndPassSchema,
   advanceToVoteSchema,
   butlerPeekSchema,

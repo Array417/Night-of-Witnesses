@@ -69,6 +69,7 @@ class FakeConnection implements MeshConnection {
   addedCandidates: RTCIceCandidateInit[] = [];
   senders = [new FakeSender(), new FakeSender()];
   closed = false;
+  offerOptions: Array<RTCOfferOptions | undefined> = [];
   deferRemoteOffer = false;
   remoteOfferResolvers: Array<() => void> = [];
 
@@ -84,7 +85,8 @@ class FakeConnection implements MeshConnection {
   addSendRecvTransceiver(): void {
     this.transceivers += 1;
   }
-  async createOffer(): Promise<RTCSessionDescriptionInit> {
+  async createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit> {
+    this.offerOptions.push(options);
     return { type: 'offer', sdp: 'fake-offer-sdp' };
   }
   async createAnswer(): Promise<RTCSessionDescriptionInit> {
@@ -248,6 +250,23 @@ describe('voice controller defaults', () => {
     assert.equal(state.micGain, 1);
     assert.equal(state.error, null);
     assert.equal(state.playbackBlocked, false);
+  });
+
+  test('ICE failure renegotiates with a restart and retains the microphone track', async () => {
+    const h = makeHarness();
+    h.controller.sync(discussionInput());
+    await flush();
+    h.controller.handleSignal('p2', 'answer', 'fake-answer');
+    await flush();
+    await h.controller.setMicEnabled(true);
+    const track = h.conns[0].sender.track;
+    h.conns[0].failedHandler?.();
+    await flush();
+    assert.deepEqual(h.conns[0].offerOptions.at(-1), { iceRestart: true });
+    assert.equal(h.conns[0].sender.track, track);
+    assert.equal(h.controller.getState().micEnabled, true);
+    assert.equal(h.signals.filter(signal => signal.kind === 'offer').length, 2);
+    h.controller.dispose();
   });
 
   test('mic requires discussion phase', async () => {

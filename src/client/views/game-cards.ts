@@ -19,6 +19,7 @@ export interface OwnCardOptions {
   readonly selected?: boolean;
   /** False for cards that may not be passed (detail opens without `#btn-pass-card`). */
   readonly passable?: boolean;
+  readonly compact?: boolean;
 }
 
 export interface CardDetailWiringOptions {
@@ -97,9 +98,9 @@ export function renderOwnCard(card: Card, options: OwnCardOptions = {}): HTMLDiv
     },
     [
       roleArt(card.role),
-      el('span', { class: 'card-kicker' }, [options.kicker ?? '手牌']),
+      ...(!options.compact ? [el('span', { class: 'card-kicker' }, [options.kicker ?? '手牌'])] : []),
       el('span', { class: 'card-role' }, [card.label]),
-      el('span', { class: 'card-action' }, [options.actionHint ?? '按 Enter 查看詳情']),
+      ...(!options.compact ? [el('span', { class: 'card-action' }, [options.actionHint ?? '按 Enter 查看詳情'])] : []),
       renderDetailTrigger(card, passable),
     ]
   );

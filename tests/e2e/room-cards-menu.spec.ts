@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { startRoom, handCards, completeDraft, closeGameMenu, openGameMenu } from './draft-flow.ts';
+import { startRoom, handCards, drawHand, completeDraft, closeGameMenu, openGameMenu } from './draft-flow.ts';
 
 test('Back revokes membership, transfers host, and keeps the socket usable', async ({ browser }) => {
   const host = await browser.newPage();
@@ -89,13 +89,16 @@ test('touch drag moves the original card and the final actor can drop into Guest
     await expect(page.locator('#claim-dialog')).toBeVisible();
     await page.locator('#btn-confirm-pass').click();
     await expect(page.locator('#claim-dialog')).toBeHidden();
+    await expect.poll(async () => await page.evaluate(() => !window.__NOW__!.client.getProjection()!.cardMotion)).toBe(true);
     const actor = await page.evaluate(() => window.__NOW__!.client.getProjection()!.currentActorId);
     const active = (await Promise.all(pages.map(async p => ({ p, id: await p.evaluate(() => window.__NOW__!.client.getProjection()!.viewerId) })))).find(row => row.id === actor)!.p;
+    await drawHand(active);
     await handCards(active).first().locator('[data-action="view-card"]').click();
     await active.locator('#btn-pass-card').click();
     await active.locator('.seat-target').first().click();
     await active.locator('#btn-confirm-pass').click();
     const final = pages.find(p => p !== page && p !== active)!;
+    await drawHand(final);
     await expect(final.locator('.guest-room-target')).toBeVisible();
     const lastCard = handCards(final).first();
     await lastCard.scrollIntoViewIfNeeded();
@@ -158,8 +161,12 @@ test('audio and mic controls live only in Menu and survive phase rerenders', asy
     await expect(page.locator('#game-menu-content #btn-toggle-mic')).toBeVisible();
     await expect(page.locator('.table-action-dock #btn-toggle-mic')).toHaveCount(0);
     await page.locator('#btn-audio-settings').click();
-    await page.locator('#settings-voice-output').fill('0.35');
-    await page.locator('#settings-mic-gain').fill('1.3');
+    for (const [selector, value] of [['#settings-voice-output', '0.35'], ['#settings-mic-gain', '1.3']]) {
+      await page.locator(selector).evaluate((element: HTMLInputElement, next) => {
+        element.value = next;
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      }, value);
+    }
     await page.locator('#btn-voice-diagnostics').click();
     await expect(page.locator('#voice-diagnostics')).toContainText('inboundBytes');
     await closeGameMenu(page);

@@ -3,7 +3,8 @@ import type { RoleId } from '../shared/rules.ts';
 
 export function projectForViewer(
   state: Readonly<CanonicalGameState>,
-  viewerPlayerId: string
+  viewerPlayerId: string,
+  now = Date.now()
 ): PlayerProjection {
   const isHost = viewerPlayerId === state.hostPlayerId;
 
@@ -65,11 +66,12 @@ export function projectForViewer(
     locationId: p.locationId,
     isHost: p.playerId === state.hostPlayerId,
     hasVoted: state.phase === 'voting' ? Boolean(state.votes[p.playerId]) : undefined,
+    handCount: state.pendingCards[p.playerId]?.length ?? (state.keptRoles[p.playerId] ? 1 : 0),
   }));
 
   // Private viewer properties
   const ownCards =
-    state.phase === 'draft' && state.currentActorId === viewerPlayerId
+    state.phase === 'draft'
       ? state.pendingCards[viewerPlayerId]
       : undefined;
 
@@ -92,6 +94,13 @@ export function projectForViewer(
       ? (state.result ?? undefined)
       : undefined;
 
+  const motion = state.cardMotion;
+  const cardMotion = motion ? {
+    id: motion.id, kind: motion.kind, fromPlayerId: motion.fromPlayerId, toPlayerId: motion.toPlayerId,
+    startedAt: motion.startedAt, endsAt: motion.endsAt,
+    ...(viewerPlayerId === motion.fromPlayerId || viewerPlayerId === motion.toPlayerId ? { card: motion.card } : {}),
+  } : null;
+
   return {
     roomCode: state.roomCode,
     version: state.version,
@@ -104,6 +113,9 @@ export function projectForViewer(
     currentActorId: state.currentActorId,
     servedPlayerIds: state.servedPlayerIds,
     testimonyTrail: state.testimonyTrail,
+    drawPileCount: Math.max(0, state.playableCards.length - (state.drawPileIndex ?? 0)),
+    cardMotion,
+    serverTime: motion ? now : undefined,
     ownCards,
     ownRole,
     ownBallot,

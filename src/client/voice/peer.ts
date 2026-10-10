@@ -16,7 +16,7 @@ export interface MeshConnection {
   setTrackHandler(handler: ((stream: MeshMediaStream) => void) | null): void;
   setFailedHandler(handler: (() => void) | null): void;
   addSendRecvTransceiver(): void;
-  createOffer(): Promise<RTCSessionDescriptionInit>;
+  createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit>;
   createAnswer(): Promise<RTCSessionDescriptionInit>;
   setLocalDescription(desc: RTCSessionDescriptionInit): Promise<void>;
   setRemoteOffer(sdp: string): Promise<void>;
@@ -51,6 +51,7 @@ export type MeshSignalSender = (
 
 class NativeMeshConnection implements MeshConnection {
   private readonly pc: RTCPeerConnection;
+  private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: RTCConfiguration) {
     this.pc = new RTCPeerConnection(config);
@@ -84,11 +85,29 @@ class NativeMeshConnection implements MeshConnection {
   }
 
   setFailedHandler(handler: (() => void) | null): void {
+    let notified = false;
+    const check = () => {
+      const failed = this.pc.connectionState === 'failed' || this.pc.iceConnectionState === 'failed';
+      const connected = this.pc.connectionState === 'connected' || this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed';
+      if (connected || this.pc.iceConnectionState === 'checking') notified = false;
+      // connectionState can still be 'failed' while the new ICE generation starts.
+      if (this.pc.iceConnectionState === 'checking') return;
+      if (this.pc.iceConnectionState !== 'disconnected' && this.disconnectTimer) {
+        clearTimeout(this.disconnectTimer);
+        this.disconnectTimer = null;
+      }
+      if (failed && !notified) { notified = true; handler?.(); }
+      if (this.pc.iceConnectionState === 'disconnected' && !this.disconnectTimer) {
+        this.disconnectTimer = setTimeout(() => {
+          this.disconnectTimer = null;
+          if (!notified && this.pc.iceConnectionState === 'disconnected') { notified = true; handler?.(); }
+        }, 5000);
+      }
+    };
     this.pc.onconnectionstatechange = handler
-      ? () => {
-          if (this.pc.connectionState === 'failed') handler();
-        }
+      ? check
       : null;
+    this.pc.oniceconnectionstatechange = handler ? check : null;
   }
 
   setStateHandler(handler: ((state: RTCPeerConnectionState) => void) | null): void {
@@ -114,8 +133,8 @@ class NativeMeshConnection implements MeshConnection {
     this.pc.addTransceiver('audio', { direction: 'sendrecv' });
   }
 
-  createOffer(): Promise<RTCSessionDescriptionInit> {
-    return this.pc.createOffer();
+  createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit> {
+    return this.pc.createOffer(options);
   }
 
   createAnswer(): Promise<RTCSessionDescriptionInit> {
@@ -161,6 +180,8 @@ class NativeMeshConnection implements MeshConnection {
   }
 
   close(): void {
+    if (this.disconnectTimer) clearTimeout(this.disconnectTimer);
+    this.disconnectTimer = null;
     try {
       this.pc.close();
     } catch {

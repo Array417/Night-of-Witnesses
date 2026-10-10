@@ -43,9 +43,15 @@ export interface DraftCoordinator {
 
 /** Non-actor or cards-not-yet-dealt panel content. */
 export function renderDraftWaiting(panel: HTMLElement, projection: PlayerProjection): void {
+  if (projection.cardMotion) {
+    panel.appendChild(el('p', { id: 'draft-waiting', role: 'status' }, [projection.cardMotion.kind === 'draw' ? '抽牌中…' : '卡牌傳遞中…']));
+    return;
+  }
   if (projection.currentActorId === projection.viewerId) {
     panel.appendChild(
-      el('div', { id: 'draft-waiting', class: 'alert alert-warning' }, ['正在等待手牌發送...'])
+      el('div', { id: 'draft-waiting', class: 'alert alert-warning' }, [
+        (projection.ownCards?.length ?? 0) === 0 ? '輪到您抽牌：從圓桌中央牌堆逐張抽取兩張卡。' : '已收到一張卡，請從圓桌中央牌堆抽取第二張。',
+      ])
     );
     return;
   }
@@ -53,7 +59,7 @@ export function renderDraftWaiting(panel: HTMLElement, projection: PlayerProject
     projection.players.find((p) => p.playerId === projection.currentActorId)?.playerName || '未知';
   panel.appendChild(
     el('div', { id: 'draft-waiting', class: 'alert alert-warning' }, [
-      `等待 【${currentActorName}】 選擇並傳遞卡片中...`,
+      `等待 【${currentActorName}】 抽牌或傳遞卡片中…`,
     ])
   );
 }
@@ -157,7 +163,7 @@ export function createDraftCoordinator(options: DraftCoordinatorOptions): DraftC
     confirmButton.disabled = false;
     confirmButton.removeAttribute('aria-busy');
     confirmButton.textContent = '確認傳遞';
-    claimSelect.value = '';
+    claimSelect.selectedIndex = 0;
   }
 
   function resetToIdle(statusMessage: string): void {
@@ -250,10 +256,8 @@ export function createDraftCoordinator(options: DraftCoordinatorOptions): DraftC
     const keepCardId = otherOwnCardId(passedCardId);
     if (keepCardId === null) return;
     const testimonyValue = claimSelect.value;
-    const testimonyRole =
-      testimonyValue !== '' && Object.hasOwn(ROLES, testimonyValue)
-        ? (testimonyValue as RoleId)
-        : undefined;
+    if (!projection.publicRoleRoster.includes(testimonyValue as RoleId)) return;
+    const testimonyRole = testimonyValue as RoleId;
 
     dialogState = 'pending';
     claimDialog.dataset.state = 'pending';

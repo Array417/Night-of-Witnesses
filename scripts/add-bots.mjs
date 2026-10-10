@@ -45,7 +45,12 @@ function joinBot(name) {
       }
 
       if (projection.phase === 'draft' && projection.currentActorId === projection.viewerId) {
+        if (projection.cardMotion) return;
         const cards = projection.ownCards || [];
+        if (cards.length < 2) {
+          sendAction(projection, { type: 'draw_card' });
+          return;
+        }
         const nextPlayer = projection.players.find(
           (candidate) => !projection.servedPlayerIds.includes(candidate.playerId)
         );

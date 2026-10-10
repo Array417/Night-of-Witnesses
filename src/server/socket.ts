@@ -378,11 +378,11 @@ export function attachWebSocketServer(
     }
   }, pingIntervalMs);
 
-  // Discussion deadline sweep: force voting without client messages.
-  // Broadcasts only rooms whose deadline actually expired (changed projections).
+  // Complete card movements and discussion deadlines without client messages.
+  // Broadcast only rooms whose timed transition changed the state.
   const discussionInterval = setInterval(() => {
     try {
-      const changed = manager.checkAllDiscussionDeadlines();
+      const changed = new Set([...manager.checkAllCardMotions(), ...manager.checkAllDiscussionDeadlines()]);
       for (const roomCode of changed) {
         broadcastRoomProjections(roomCode);
       }

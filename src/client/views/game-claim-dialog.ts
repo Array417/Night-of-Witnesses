@@ -1,5 +1,5 @@
 /**
- * Mandatory draft claim dialog markup: 「不特別聲明」 plus every role in the
+ * Mandatory draft claim dialog markup: every role in the
  * viewer's `publicRoleRoster`, an explicit `#btn-confirm-pass`, and
  * `#btn-cancel-pass`. Selecting an option never submits; only the confirm
  * button reaches the transfer coordinator.
@@ -18,7 +18,6 @@ export interface ClaimDialogRefs {
 export function renderClaimDialog(publicRoleRoster: readonly RoleId[]): ClaimDialogRefs {
   const summary = el('p', { id: 'claim-transfer-summary' });
   const select = el('select', { id: 'claim-role-select' }, [
-    el('option', { value: '' }, ['不特別聲明']),
     ...publicRoleRoster.map((roleId) =>
       el('option', { value: roleId }, [ROLES[roleId]?.label || roleId])
     ),

@@ -44,7 +44,7 @@ services:
         exec turnserver -n --log-file=stdout --fingerprint --use-auth-secret \
           --static-auth-secret="$$TURN_SHARED_SECRET" --realm="$$TURN_HOST" \
           --external-ip="$$TURN_EXTERNAL_IP" --listening-port=3478 \
-          --min-port=49160 --max-port=49200 --no-tls --no-dtls \
+          --min-port=49160 --max-port=49200 --no-tls \
           --no-cli --no-multicast-peers --user-quota=12 --total-quota=1200
 
   caddy:

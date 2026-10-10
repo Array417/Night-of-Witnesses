@@ -2,9 +2,9 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createGame,
-  reduceGame,
   type GameAction,
 } from '../../src/shared/game.ts';
+import { reducePreparedGame as reduceGame } from '../helpers/draft.ts';
 import { RulesError } from '../../src/shared/rules.ts';
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu, consentDiscussion } from './draft-flow.ts';
+import { drawHand, passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu, consentDiscussion } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
@@ -74,6 +74,7 @@ test.describe('complete Traditional Chinese lobby and gameplay interface', () =>
     await expect(secretContentAlice).toBeVisible();
 
     // Verify Alice (p1) is current actor in draft
+    await drawHand(pAlice);
     await expect(pAlice.locator('#draft-controls')).toBeVisible();
     await expect(pBob.locator('#draft-controls')).toBeHidden();
     await closeGameMenu(pAlice);
@@ -83,12 +84,14 @@ test.describe('complete Traditional Chinese lobby and gameplay interface', () =>
 
     // Now Bob is actor
     await openGameMenu(pBob);
+    await drawHand(pBob);
     await expect(pBob.locator('#draft-controls')).toBeVisible();
     await closeGameMenu(pBob);
     await passToFirstEligible(pBob);
 
     // Charlie is final actor
     await openGameMenu(pCharlie);
+    await drawHand(pCharlie);
     await expect(pCharlie.locator('#draft-controls')).toBeVisible();
     await closeGameMenu(pCharlie);
     await passToGuestRoom(pCharlie);

@@ -89,6 +89,9 @@ const turn = process.env.TURN_HOST || process.env.TURN_SHARED_SECRET
   ? { host: process.env.TURN_HOST ?? '', secret: process.env.TURN_SHARED_SECRET ?? '' }
   : undefined;
 createTurnIceServers(turn, 'startup-validation');
+if (!turn && !iceServers.some(server => (Array.isArray(server.urls) ? server.urls : [server.urls]).some(url => /^turns?:/i.test(url)))) {
+  console.warn('[Night of Witnesses] No TURN relay configured. Cross-network voice may fail; configure TURN_HOST/TURN_SHARED_SECRET or RTC_ICE_SERVERS_JSON.');
+}
 if (turn && iceServers.length > 6) throw new Error('With self-hosted TURN, RTC_ICE_SERVERS_JSON supports at most 6 entries');
 const manager = new RoomManager({
   getSeed: testSeed ? () => testSeed : undefined,

@@ -69,7 +69,7 @@ PLIST
 case "${1:-}" in
   --stop)
     echo "[boot] 停止 ${EXTERNAL_PORT} 服務…"
-    docker compose down
+    docker compose --profile voice down
     exit 0
     ;;
   --logs)
@@ -114,7 +114,23 @@ if [[ ! -f .env && -f .env.example ]]; then
 fi
 
 echo "[boot] 建置映像檔並啟動容器（對外 ${EXTERNAL_PORT} -> 容器 3000）…"
-docker compose up -d --build
+# Read resolved settings without printing the TURN shared secret.
+COMPOSE_CONFIG="$(docker compose --profile voice config --format json)"
+COMPOSE_ARGS=()
+if printf '%s' "${COMPOSE_CONFIG}" | grep -qE '"TURN_SHARED_SECRET": "[^"]+"'; then
+  for SETTING in TURN_HOST TURN_EXTERNAL_IP; do
+    if ! printf '%s' "${COMPOSE_CONFIG}" | grep -qE "\"${SETTING}\": \"[^\"]+\""; then
+      echo "[boot] 錯誤：自建語音中繼需要設定 ${SETTING}。" >&2
+      exit 1
+    fi
+  done
+  COMPOSE_ARGS=(--profile voice)
+  echo "[boot] 已啟用自建 TURN 語音中繼（3478 TCP/UDP；49160–49200 UDP）。"
+else
+  echo "[boot] 未設定自建 TURN；跨網絡語音需於 RTC_ICE_SERVERS_JSON 設定可用的外部 TURN。"
+fi
+unset COMPOSE_CONFIG
+docker compose "${COMPOSE_ARGS[@]}" up -d --build
 
 echo "[boot] 等待健康檢查…"
 for i in $(seq 1 30); do

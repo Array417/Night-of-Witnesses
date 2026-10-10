@@ -10,6 +10,7 @@ import {
   GAME_MENU,
   SHOW_GAME_MENU,
   armCard,
+  drawHand,
   closeGameMenu,
   confirmClaim,
   firstSeatTarget,
@@ -90,6 +91,7 @@ async function startGame(
   await startButton.click();
   // The table surface is visible on every viewport; menu panels may live in a closed drawer.
   for (const page of pages) await expect(page.locator('.table-panel')).toBeVisible();
+  await drawHand(host);
   return { pages, contexts, roomCode: code };
 }
 
@@ -244,7 +246,7 @@ interface OpponentSeatRects {
 
 /** Rectangles of every opponent seat, its one card back, and its three metadata lines. */
 async function opponentSeatRects(page: Page): Promise<OpponentSeatRects[]> {
-  return page.locator('.table-panel .seat:not([aria-current="true"])').evaluateAll((seats) =>
+  return page.locator('.table-panel .seat:not([aria-current="true"]):has(.seat-card)').evaluateAll((seats) =>
     seats.map((seat) => {
       const rectOf = (node: Element): LayoutBox => {
         const box = node.getBoundingClientRect();
@@ -373,6 +375,7 @@ test.describe('Responsive Witness Table & Accessible Draft Flow', () => {
       // The menu keeps room/phase/role/testimony information; on drawer viewports it opens first.
       await openGameMenu(p1);
       await expect(p1.locator('#game-header')).toBeVisible();
+      await drawHand(p1);
       await expect(p1.locator('#draft-controls')).toBeVisible();
       await expect(p1.locator('.cards-row')).toHaveCount(0);
       await closeGameMenu(p1);
@@ -409,7 +412,7 @@ test.describe('Responsive Witness Table & Accessible Draft Flow', () => {
       // One generic opponent back per opponent seat, zero secrets on those nodes.
       const opponentSeats = p1.locator('.table-panel .seat:not([aria-current="true"])');
       await expect(opponentSeats).toHaveCount(2);
-      await expect(opponentSeats.locator('.card-back[data-owner="opponent"]')).toHaveCount(2);
+      await expect(opponentSeats.locator('.card-back[data-owner="opponent"]')).toHaveCount(0);
       expect(
         await opponentSeats
           .locator('.card-back')
@@ -478,18 +481,21 @@ test.describe('Responsive Witness Table & Accessible Draft Flow', () => {
       const [p1, p2, p3] = pages;
 
       // Player 1: detail dialog fallback for the second card, then target Player 2.
-      await expect(p1.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(p1);
+      await expect(p1.locator('#draft-controls')).toBeVisible();
       await armCard(p1, 1);
       await firstSeatTarget(p1).click();
       await confirmClaim(p1);
       await expect(p1.locator(DRAFT_CONTROLS)).toBeHidden();
 
       // Player 2 → Player 3.
-      await expect(p2.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(p2);
+      await expect(p2.locator('#draft-controls')).toBeVisible();
       await passToFirstEligible(p2);
 
       // Player 3 is final and uses the Guest Room centre target.
-      await expect(p3.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(p3);
+      await expect(p3.locator('#draft-controls')).toBeVisible();
       await passToGuestRoom(p3);
 
       // All transition to discussion phase.
@@ -579,7 +585,7 @@ test.describe('Canonical wooden table surface (Todo 5)', () => {
       }
       await expect(
         host.locator('.table-panel .seat:not([aria-current="true"]) .card-back[data-owner="opponent"]')
-      ).toHaveCount(5);
+      ).toHaveCount(0);
       const opponentHtml = await host
         .locator('.table-panel .seat:not([aria-current="true"])')
         .evaluateAll((elements) => elements.map((element) => element.outerHTML).join('\n'));
@@ -630,7 +636,8 @@ test.describe('Canonical wooden table surface (Todo 5)', () => {
     });
     try {
       const [alice, bob] = pages;
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
 
       const ids = await seatIds(alice);
       const [aliceId, bobId, charlieId] = ids;
@@ -695,7 +702,8 @@ test.describe('Canonical wooden table surface (Todo 5)', () => {
 
       // Advance the draft: p1 passes to p2, so p1 becomes a served non-target.
       await expect(alice.locator(DRAFT_CONTROLS)).toBeHidden();
-      await expect(bob.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(bob);
+      await expect(bob.locator('#draft-controls')).toBeVisible();
 
       const bobTargets = await bob
         .locator('.table-panel .seats button.seat-target')
@@ -726,9 +734,11 @@ test.describe('Canonical wooden table surface (Todo 5)', () => {
 
       // Alice -> Bob, Bob -> Charlie, leaving Charlie as the final actor.
       await passToFirstEligible(alice);
-      await expect(bob.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(bob);
+      await expect(bob.locator('#draft-controls')).toBeVisible();
       await passToFirstEligible(bob);
-      await expect(charlie.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(charlie);
+      await expect(charlie.locator('#draft-controls')).toBeVisible();
 
       // No seat is a pass target for the final actor.
       await expect(charlie.locator('.table-panel .seats button.seat-target')).toHaveCount(0);
@@ -1023,17 +1033,22 @@ test.describe('Canonical wooden table surface (Todo 5)', () => {
         }
       });
 
-      // Exactly one privacy-safe back per opponent seat, no role leak.
+      // No placeholder cards for opponents who have not received a card.
       const opponentSeats = host.locator('.table-panel .seat:not([aria-current="true"])');
       await expect(opponentSeats).toHaveCount(3);
-      await expect(opponentSeats.locator('.seat-card')).toHaveCount(3);
-      await expect(opponentSeats.locator('.card-back[data-owner="opponent"]')).toHaveCount(3);
+      await expect(opponentSeats.locator('.seat-card')).toHaveCount(0);
+      await expect(opponentSeats.locator('.card-back[data-owner="opponent"]')).toHaveCount(0);
       const opponentHtml = await opponentSeats.evaluateAll((elements) =>
         elements.map((element) => element.outerHTML)
       );
       for (const html of opponentHtml) {
         expect(findSecretLeaks(html), 'opponent seat leaks a role label').toEqual([]);
       }
+
+      // Deal actual opponent hands before measuring backs; unserved seats have none.
+      await passToFirstEligible(pages[0]);
+      await passToFirstEligible(pages[1]);
+      await drawHand(pages[2]);
 
       const geometry: Record<string, unknown> = {};
       const writeGeometry = (): void => {
@@ -1084,15 +1099,15 @@ test.describe('Canonical wooden table surface (Todo 5)', () => {
       await host.evaluate(() => {
         document.documentElement.style.fontSize = '';
       });
-      await passToFirstEligible(pages[0]);
-      await passToFirstEligible(pages[1]);
       await passToFirstEligible(pages[2]);
       const finalActor = pages[3];
+      await drawHand(finalActor);
       for (const viewport of [
         { width: 360, height: 800 },
         { width: 375, height: 812 },
       ]) {
         await finalActor.setViewportSize(viewport);
+        await finalActor.locator('.guest-room-target').scrollIntoViewIfNeeded();
         const hits = await finalActor.evaluate(() => {
           const target = document.querySelector('.table-panel [data-target-id="guest-room"]');
           if (!(target instanceof HTMLElement)) throw new Error('guest room target missing');
@@ -1210,7 +1225,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
     );
     try {
       const [alice, charlie] = [pages[0], pages[2]];
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
 
       // The legacy draft widgets are gone: only the coordinator remains.
       for (const selector of [
@@ -1244,10 +1260,10 @@ test.describe('Transfer coordinator (Todo 6)', () => {
       const optionValues = await alice
         .locator('#claim-role-select option')
         .evaluateAll((elements) => elements.map((element) => (element as HTMLOptionElement).value));
-      expect(optionValues[0]).toBe('');
+      expect(optionValues).not.toContain('');
       await alice.locator('#claim-role-select').selectOption('murderer');
       await expect(alice.locator(CLAIM_DIALOG)).toBeVisible();
-      await alice.locator('#claim-role-select').selectOption('');
+      await alice.locator('#claim-role-select').selectOption('guest');
       expect(capture.messages).toHaveLength(0);
       await expect(alice.locator('#btn-confirm-pass')).toBeEnabled();
 
@@ -1267,12 +1283,13 @@ test.describe('Transfer coordinator (Todo 6)', () => {
       expect(payload.type).toBe('choose_and_pass');
       expect(payload.keepCardId).toBe(keptCardId);
       expect(payload.passToPlayerId).toBe(charlieId);
-      expect('testimonyRole' in payload).toBe(false);
+      expect(payload.testimonyRole).toBe('guest');
       expect(typeof payload.baseVersion).toBe('number');
       expect(typeof payload.actionId).toBe('string');
 
       // The turn advanced after exactly one action; Charlie is the new actor.
-      await expect(charlie.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(charlie);
+      await expect(charlie.locator('#draft-controls')).toBeVisible();
       expect(capture.messages).toHaveLength(1);
 
       recordEvidence(PAYLOAD_EVIDENCE, 'desktopDrag', {
@@ -1307,7 +1324,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
     );
     try {
       const alice = pages[0];
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
       const ids = await seatIds(alice);
       const bobId = ids[1];
       const firstCard = handCards(alice).first();
@@ -1394,9 +1412,11 @@ test.describe('Transfer coordinator (Todo 6)', () => {
     try {
       const [alice, bob, charlie] = pages;
       await passToFirstEligible(alice);
-      await expect(bob.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(bob);
+      await expect(bob.locator('#draft-controls')).toBeVisible();
       await passToFirstEligible(bob);
-      await expect(charlie.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(charlie);
+      await expect(charlie.locator('#draft-controls')).toBeVisible();
 
       // No seat is a target for the final actor; the Guest Room is the only one.
       await expect(charlie.locator('.table-panel .seats button.seat-target')).toHaveCount(0);
@@ -1461,7 +1481,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
     );
     try {
       const alice = pages[0];
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
       const ids = await seatIds(alice);
       const [aliceId, bobId] = ids;
       const draggedCardId = await handCards(alice).nth(1).getAttribute('data-card-id');
@@ -1540,7 +1561,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
     );
     try {
       const alice = pages[0];
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
       const ids = await seatIds(alice);
       const bobId = ids[1];
       const draggedCardId = await handCards(alice).nth(1).getAttribute('data-card-id');
@@ -1576,7 +1598,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
         (window as unknown as { __NOW__?: { client: { connect(): void } } }).__NOW__?.client.connect();
       });
       await expect(alice.locator('#draft-controls[data-stale-probe]')).toHaveCount(0);
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
       await dropCard(alice, bobId, draggedCardId);
       await expect(alice.locator(CLAIM_DIALOG)).toBeVisible();
       await alice.locator('#btn-confirm-pass').click();
@@ -1612,7 +1635,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
     );
     try {
       const alice = pages[0];
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
       const ids = await seatIds(alice);
       const bobId = ids[1];
       const draggedCardId = await handCards(alice).nth(1).getAttribute('data-card-id');
@@ -1630,7 +1654,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
       await expect(alert).toBeFocused();
       await expect(alice.locator('#btn-confirm-pass')).toBeEnabled();
       await expect(alice.locator(CLAIM_DIALOG)).toBeHidden();
-      await expect(alice.locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(alice);
+      await expect(alice.locator('#draft-controls')).toBeVisible();
       await expect(handCards(alice)).toHaveCount(2);
       expect(capture.messages).toHaveLength(1);
       expect(capture.forwarded).toBe(0);
@@ -1641,7 +1666,8 @@ test.describe('Transfer coordinator (Todo 6)', () => {
       await alice.locator('#btn-confirm-pass').click();
       await expect.poll(() => capture.messages.length).toBe(2);
       expect(capture.forwarded).toBe(1);
-      await expect(pages[1].locator(DRAFT_CONTROLS)).toBeVisible();
+      await drawHand(pages[1]);
+      await expect(pages[1].locator('#draft-controls')).toBeVisible();
 
       recordEvidence(FAILURE_EVIDENCE, 'serverError', {
         alertText: 'transfer-coordinator test rejection',
@@ -1983,6 +2009,7 @@ test.describe('Adaptive game shell (Todo 7)', () => {
       // Bob passes to Charlie by tap, then Charlie's Guest Room tap is the final path.
       await expect(bob.locator('.table-panel .seat[aria-current="true"].is-active')).toHaveCount(1);
       const bobCards = handCards(bob);
+      await drawHand(bob);
       await bobCards.nth(1).click();
       await expect(bobCards.nth(1)).toHaveClass(/is-selected/);
       await seatTarget(bob, charlieId).click();
@@ -1992,6 +2019,7 @@ test.describe('Adaptive game shell (Todo 7)', () => {
 
       await expect(charlie.locator('.table-panel .seat[aria-current="true"].is-active')).toHaveCount(1);
       const charlieCards = handCards(charlie);
+      await drawHand(charlie);
       await charlieCards.nth(0).click();
       await expect(charlieCards.nth(0)).toHaveClass(/is-selected/);
       await guestRoomTarget(charlie).click();

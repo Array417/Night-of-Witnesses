@@ -21,6 +21,7 @@ export interface VoicePeerEvents {
 export interface VoicePeerDeps {
   events: VoicePeerEvents;
   createSink: (peerId: string) => RemoteAudioSink;
+  offerer: boolean;
 }
 
 export class VoicePeer {
@@ -32,6 +33,7 @@ export class VoicePeer {
   private volume = 0.8;
   private localTrack: MeshAudioTrack | null = null;
   private detached = false;
+  private restartAttempts = 0;
   private readonly peerId: string;
   private readonly connection: MeshConnection;
   private readonly events: VoicePeerEvents;
@@ -54,6 +56,7 @@ export class VoicePeer {
             candidate: raw,
             sdpMid: candidate.sdpMid ?? null,
             sdpMLineIndex: candidate.sdpMLineIndex ?? null,
+            usernameFragment: candidate.usernameFragment ?? null,
           }),
         );
       } catch (err) {
@@ -64,6 +67,12 @@ export class VoicePeer {
       this.attachSink(stream);
     });
     connection.setFailedHandler(() => {
+      if (this.detached) return;
+      if (deps.offerer && this.restartAttempts < 2) {
+        this.restartAttempts += 1;
+        void this.run(() => this.makeOffer(true));
+        return;
+      }
       this.connectionState = 'failed';
       this.events.notifyPeerState?.();
       this.events.reportError('與玩家語音連線失敗，仍可繼續遊戲');
@@ -71,6 +80,7 @@ export class VoicePeer {
     connection.setStateHandler?.(state => {
       if (this.detached) return;
       this.connectionState = state;
+      if (state === 'connected') this.restartAttempts = 0;
       this.events.notifyPeerState?.();
     });
     connection.addSendRecvTransceiver();
@@ -88,8 +98,9 @@ export class VoicePeer {
     return next;
   }
 
-  async makeOffer(): Promise<void> {
-    const offer = await this.connection.createOffer();
+  async makeOffer(restart = false): Promise<void> {
+    if (restart) this.remoteSet = false;
+    const offer = await this.connection.createOffer(restart ? { iceRestart: true } : undefined);
     await this.connection.setLocalDescription(offer);
     const sdp = offer.sdp;
     if (typeof sdp !== 'string' || sdp.length === 0) {

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { passToFirstEligible, passToGuestRoom, startRoom } from './draft-flow.ts';
+import { drawHand, passToFirstEligible, passToGuestRoom, startRoom } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence/final-f3-visual-qa');
 fs.mkdirSync(evidenceDir, { recursive: true });
@@ -9,7 +9,7 @@ fs.mkdirSync(evidenceDir, { recursive: true });
 test.describe('Interaction, Audio Persistence and Privacy Contracts (Todo 8)', () => {
   test('audio settings persist in localStorage and update manager state', async ({ page }) => {
     await page.goto('/');
-    await page.locator('#btn-app-menu').click();
+    await page.locator('#app-menu > summary').click();
 
     // Check default preferences stored or initial state
     await page.locator('#btn-audio-mute').click();
@@ -73,6 +73,7 @@ test.describe('Interaction, Audio Persistence and Privacy Contracts (Todo 8)', (
     await pAlice.locator('#btn-start-game').click();
 
     // Alice enters draft and sees her own cards
+    await drawHand(pAlice);
     await expect(pAlice.locator('#draft-controls')).toBeVisible();
 
     // Get Alice's own secret role from the role disclosure button

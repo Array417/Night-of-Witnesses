@@ -29,6 +29,18 @@ export interface TestimonyEntry {
   testimonyRole?: RoleId;
 }
 
+export const CARD_MOTION_MS = 900;
+
+export interface CardMotion {
+  id: string;
+  kind: 'draw' | 'pass';
+  fromPlayerId: string | null; // null = draw pile
+  toPlayerId: string | null; // null = guest room
+  startedAt: number;
+  endsAt: number;
+  card: Card;
+}
+
 export interface BallotEntry {
   voterId: string;
   targetLocation: PlayerLocationId;
@@ -78,7 +90,9 @@ export interface CanonicalGameState {
   // Draft phase state
   currentActorId: string | null;
   servedPlayerIds: string[];
-  pendingCards: Record<string, Card[]>; // playerId -> 2 candidate cards
+  pendingCards: Record<string, Card[]>; // playerId -> 0–2 cards drawn or received
+  drawPileIndex?: number;
+  cardMotion?: CardMotion | null;
   keptRoles: Record<string, Card>; // playerId -> kept card
   guestRoomCard: Card | null;
   testimonyTrail: TestimonyEntry[];
@@ -115,11 +129,15 @@ export interface PlayerProjection {
     locationId: PlayerLocationId | null;
     isHost: boolean;
     hasVoted?: boolean;
+    handCount?: number;
   }>;
   publicRoleRoster: RoleId[];
   currentActorId: string | null;
   servedPlayerIds: string[];
   testimonyTrail: TestimonyEntry[];
+  drawPileCount?: number;
+  cardMotion?: (Omit<CardMotion, 'card'> & { card?: Card }) | null;
+  serverTime?: number;
 
   // Viewer's private view
   ownCards?: Card[];

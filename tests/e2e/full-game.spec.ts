@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu, consentDiscussion } from './draft-flow.ts';
+import { drawHand, passToFirstEligible, passToGuestRoom, openGameMenu, closeGameMenu, consentDiscussion } from './draft-flow.ts';
 
 const evidenceDir = path.resolve('.omo/evidence');
 if (!fs.existsSync(evidenceDir)) {
@@ -65,6 +65,7 @@ test.describe('authoritative end-to-end game journeys', () => {
     await expect(pCharlie.locator('.table-panel')).toBeVisible();
 
     // CANARY & PRIVACY CHECK:
+    await drawHand(pAlice);
     // Bob and Charlie must NOT see draft controls while Alice is active
     await openGameMenu(pAlice);
     await expect(pAlice.locator('#draft-controls')).toBeVisible();
@@ -76,6 +77,7 @@ test.describe('authoritative end-to-end game journeys', () => {
     await passToFirstEligible(pAlice);
 
     // Bob is now active actor
+    await drawHand(pBob);
     await openGameMenu(pBob);
     await expect(pBob.locator('#draft-controls')).toBeVisible();
     await expect(pAlice.locator('#draft-controls')).toBeHidden();
@@ -83,6 +85,7 @@ test.describe('authoritative end-to-end game journeys', () => {
     await passToFirstEligible(pBob);
 
     // Charlie is final actor
+    await drawHand(pCharlie);
     await openGameMenu(pCharlie);
     await expect(pCharlie.locator('#draft-controls')).toBeVisible();
     await closeGameMenu(pCharlie);

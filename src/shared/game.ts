@@ -16,8 +16,10 @@ import type {
   TestimonyEntry,
 } from './state.ts';
 import { clearDiscussion, isDiscussionUnanimous } from './discussion.ts';
+import { CARD_MOTION_MS } from './state.ts';
 
 export type GameAction =
+  | { type: 'draw_card'; actionId: string; baseVersion: number; playerId: string; now?: number }
   | {
       type: 'add_player';
       actionId: string;
@@ -60,6 +62,7 @@ export type GameAction =
       keepCardId: string;
       passToPlayerId?: string;
       testimonyRole?: RoleId;
+      now?: number;
     }
   | {
       type: 'advance_to_vote';
@@ -127,6 +130,8 @@ export function createGame(options: CreateGameOptions): CanonicalGameState {
     currentActorId: null,
     servedPlayerIds: [],
     pendingCards: {},
+    drawPileIndex: 0,
+    cardMotion: null,
     keptRoles: {},
     guestRoomCard: null,
     testimonyTrail: [],
@@ -284,12 +289,31 @@ export function reduceGame(
       next.setAsideCards = setup.setAsideCards;
       next.removedCards = setup.removedCards;
 
-      // Draft setup: First player receives first 2 cards
+      // The first player draws two cards one at a time.
       const firstPlayerId = playerIds[0];
       next.currentActorId = firstPlayerId;
       next.servedPlayerIds = [firstPlayerId];
-      next.pendingCards[firstPlayerId] = [next.playableCards[0], next.playableCards[1]];
+      next.pendingCards = { [firstPlayerId]: [] };
+      next.drawPileIndex = 0;
+      next.cardMotion = null;
       next.phase = 'draft';
+      next.version += 1;
+      return next;
+    }
+
+    case 'draw_card': {
+      if (next.phase !== 'draft') throw new RulesError('INVALID_ACTION', 'Cannot draw outside draft phase');
+      if (next.cardMotion) throw new RulesError('INVALID_ACTION', 'Card is still moving');
+      if (action.playerId !== next.currentActorId) throw new RulesError('INVALID_ACTION', 'Not your turn to draw');
+      const cards = next.pendingCards[action.playerId];
+      if (!cards || cards.length >= 2) throw new RulesError('INVALID_ACTION', 'Already holding two cards');
+      const index = next.drawPileIndex ?? 0;
+      const card = next.playableCards[index];
+      if (!card) throw new RulesError('INVALID_ACTION', 'Draw pile is empty');
+      cards.push(card);
+      next.drawPileIndex = index + 1;
+      const now = action.now ?? 0;
+      next.cardMotion = { id: action.actionId, kind: 'draw', fromPlayerId: null, toPlayerId: action.playerId, card, startedAt: now, endsAt: now + CARD_MOTION_MS };
       next.version += 1;
       return next;
     }
@@ -298,6 +322,7 @@ export function reduceGame(
       if (next.phase !== 'draft') {
         throw new RulesError('INVALID_ACTION', 'Cannot choose/pass outside draft phase');
       }
+      if (next.cardMotion) throw new RulesError('INVALID_ACTION', 'Card is still moving');
       if (action.playerId !== next.currentActorId) {
         throw new RulesError('INVALID_ACTION', 'Not your turn to choose and pass');
       }
@@ -328,10 +353,6 @@ export function reduceGame(
       if (isFinalPlayer) {
         // Leftover card goes to Guest Room face-down
         next.guestRoomCard = passedCard;
-        next.currentActorId = null;
-        next.phase = 'discussion';
-        next.discussionConsents = [];
-        next.discussionDeadlineAt = null;
       } else {
         if (!action.passToPlayerId) {
           throw new RulesError('INVALID_ACTION', 'Must specify passToPlayerId for non-final player');
@@ -343,16 +364,11 @@ export function reduceGame(
           throw new RulesError('INVALID_ACTION', 'Target player has already received cards');
         }
 
-        // Target draws next card from playable deck
-        // Index in playableCards = servedPlayerIds.length + 1
-        const nextDrawIndex = next.servedPlayerIds.length + 1;
-        const drawnCard = next.playableCards[nextDrawIndex];
-
         next.servedPlayerIds.push(action.passToPlayerId);
-        next.currentActorId = action.passToPlayerId;
-        next.pendingCards[action.passToPlayerId] = [passedCard, drawnCard];
+        next.pendingCards[action.passToPlayerId] = [passedCard];
       }
-
+      const now = action.now ?? 0;
+      next.cardMotion = { id: action.actionId, kind: 'pass', fromPlayerId: action.playerId, toPlayerId: isFinalPlayer ? null : action.passToPlayerId!, card: passedCard, startedAt: now, endsAt: now + CARD_MOTION_MS };
       next.version += 1;
       return next;
     }
@@ -484,6 +500,8 @@ export function reduceGame(
       next.currentActorId = null;
       next.servedPlayerIds = [];
       next.pendingCards = {};
+      next.drawPileIndex = 0;
+      next.cardMotion = null;
       next.keptRoles = {};
       next.guestRoomCard = null;
       next.testimonyTrail = [];
@@ -504,6 +522,23 @@ export function reduceGame(
       throw new RulesError('INVALID_ACTION', `Unhandled action: ${JSON.stringify(_exhaustive)}`);
     }
   }
+}
+
+/** Server-owned animation completion; clients cannot skip the movement lock. */
+export function finishCardMotion(state: Readonly<CanonicalGameState>, now: number): CanonicalGameState {
+  const motion = state.cardMotion;
+  if (!motion || now < motion.endsAt || state.phase !== 'draft') return state as CanonicalGameState;
+  const next = cloneState(state);
+  next.cardMotion = null;
+  if (motion.kind === 'pass') {
+    next.currentActorId = motion.toPlayerId;
+    if (motion.toPlayerId === null) {
+      next.phase = 'discussion';
+      clearDiscussion(next);
+    }
+  }
+  next.version += 1;
+  return next;
 }
 
 function resolveRound(state: CanonicalGameState, detectiveForcedLocation?: PlayerLocationId): void {

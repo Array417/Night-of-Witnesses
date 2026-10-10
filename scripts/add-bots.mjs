@@ -4,8 +4,9 @@ const DEFAULT_NAMES = ['Bot 1', 'Bot 2', 'Bot 3'];
 const roomCode = process.argv[2]?.trim().toUpperCase();
 const names = process.argv.slice(3);
 const botNames = names.length === 0 ? DEFAULT_NAMES : names;
-const wsUrl = process.env.WS_URL || `ws://${process.env.HOST || '127.0.0.1'}:${process.env.PORT || '3000'}/ws`;
-const origin = process.env.ORIGIN || 'http://localhost:3000';
+const defaultHost = process.env.HOST && process.env.HOST !== '0.0.0.0' ? process.env.HOST : '127.0.0.1';
+const wsUrl = process.env.WS_URL || `ws://${defaultHost}:${process.env.PORT || '3000'}/ws`;
+const origin = process.env.ORIGIN?.split(',')[0]?.trim() || 'http://localhost:3000';
 
 if (!roomCode || roomCode.length !== 6 || botNames.length !== 3) {
   console.error('Usage: npm run add-bots -- ROOMCODE [BOT1 BOT2 BOT3]');

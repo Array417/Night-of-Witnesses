@@ -88,4 +88,52 @@ describe('local bot player helper', () => {
     botProcess.kill('SIGINT');
     await new Promise<void>((resolve) => botProcess.once('close', () => resolve()));
   });
+
+  test('joins three bots when ORIGIN contains comma-separated origins and HOST is 0.0.0.0', async () => {
+    const { roomCode } = manager.createRoom('Host');
+
+    const botProcess = spawn(
+      process.execPath,
+      ['scripts/add-bots.mjs', roomCode, 'BotA', 'BotB', 'BotC'],
+      {
+        cwd: path.resolve('.'),
+        env: {
+          ...process.env,
+          WS_URL: wsUrl,
+          HOST: '0.0.0.0',
+          ORIGIN: 'http://localhost:3000,http://127.0.0.1:3000',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
+
+    let output = '';
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`bot process timed out: ${output}`)), 5000);
+      botProcess.stdout.on('data', (chunk: Buffer) => {
+        output += chunk.toString();
+        if (output.includes('All bots are ready')) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      botProcess.stderr.on('data', (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      botProcess.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+
+    const room = manager.getRoom(roomCode);
+    assert.ok(room);
+    assert.deepEqual(
+      room.state.players.map((player) => player.playerName),
+      ['Host', 'BotA', 'BotB', 'BotC']
+    );
+
+    botProcess.kill('SIGINT');
+    await new Promise<void>((resolve) => botProcess.once('close', () => resolve()));
+  });
 });

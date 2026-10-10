@@ -30,6 +30,34 @@ ensure_compose_plugin() {
   docker compose version >/dev/null 2>&1
 }
 
+# --- 確保 docker CLI 連到 Colima 嘅 daemon ---
+# Colima 重啟後，Docker 嘅 context 有時會遺失／仍指向唔存在嘅 /var/run/docker.sock，
+# 令 `docker compose up` 報 "failed to connect to the docker API"。
+# 呢度只喺「現用 context 連唔到」先修正；如果本身通（例如 Docker Desktop）就完全唔郁。
+COLIMA_SOCKET="${HOME}/.colima/default/docker.sock"
+
+ensure_docker_daemon() {
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ ! -S "${COLIMA_SOCKET}" ]]; then
+    echo "[boot] 錯誤：Docker daemon 連唔到，亦搵唔到 Colima socket（${COLIMA_SOCKET}）。" >&2
+    return 1
+  fi
+  echo "[boot] 偵測到 docker CLI 未指向 Colima，正在修正 context…"
+  if ! docker context inspect colima >/dev/null 2>&1; then
+    docker context create colima --description "Colima" \
+      --docker "host=unix://${COLIMA_SOCKET}" >/dev/null
+  fi
+  docker context use colima >/dev/null
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  # 最後手段：只喺本次執行用環境變數，唔改動全域設定。
+  export DOCKER_HOST="unix://${COLIMA_SOCKET}"
+  docker info >/dev/null 2>&1
+}
+
 install_natpmp_agent() {
   # 將續期腳本放到非 TCC 保護目錄（LaunchAgent 讀唔到 ~/Desktop）
   mkdir -p "${SUPPORT_DIR}" "${HOME}/Library/LaunchAgents" "${HOME}/Library/Logs"
@@ -100,6 +128,11 @@ if ! colima status >/dev/null 2>&1; then
   colima start
 else
   echo "[boot] Colima 已在運行。"
+fi
+
+if ! ensure_docker_daemon; then
+  echo "[boot] 錯誤：無法連線 Docker daemon，請檢查 Colima（colima status）或 Docker 設定。" >&2
+  exit 1
 fi
 
 if ! ensure_compose_plugin; then

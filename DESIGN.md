@@ -1,5 +1,11 @@
 # Tavern Design System & Interaction Contract (DESIGN.md)
 
+## React application surfaces
+
+The product entrypoint is now React + TypeScript with Material UI, using the same walnut, brass and parchment palette. Login/register/reset forms share a responsive illustrated tavern panel. The dashboard presents real account statistics, a prominent public-room directory, private/public creation controls, invitation-code joining and recent matches. Private creation is the default. A separate history page expands role/faction performance and time/streak statistics. Players and administrators share one login form; the server determines the role and routes administrators to the read-only management overview while keeping account tables and sessions separate. Lobby level explanations describe the complete public role pool, never the actual hidden assignments.
+
+React owns lobby, active table, dialogs, discussion/voting and result views. Existing original card/location artwork, server projections, clockwise seating calculations, voice and audio engines remain shared. Every effect that owns a websocket, timer, drag listener or voice subscription supplies cleanup. No dashboard counter uses fabricated demo data.
+
 This document establishes the authoritative design system, visual styling, layout geometry, interaction patterns, accessibility constraints, and component primitives for the 《目擊者之夜》 (Night of Witnesses) web application.
 
 ---

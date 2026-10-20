@@ -6,5 +6,8 @@ mcslimeserver.ddnsgeek.com {
 	encode gzip
 
 	# 轉發畀遊戲容器（Docker compose 網絡內部）
-	reverse_proxy now-game:3000
+	reverse_proxy now-game:3000 {
+		header_up X-Now-Client-IP {http.request.remote.host}
+		header_up X-Now-Proxy-Token {$INTERNAL_API_SECRET}
+	}
 }

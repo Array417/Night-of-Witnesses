@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { displayNameSchema } from './accounts.ts';
 import type { PlayerProjection } from './state.ts';
 
 export const roleIdSchema = z.enum([
@@ -86,6 +87,8 @@ export const gameResultSchema = z.object({
 });
 
 export const playerProjectionSchema = z.object({
+  isPublic: z.boolean().optional(),
+  historyStatus: z.enum(['none', 'saving', 'saved']).optional(),
   roomCode: z.string(),
   version: z.number().int().nonnegative(),
   phase: gamePhaseSchema,
@@ -142,16 +145,17 @@ export type IceServerConfig = z.infer<typeof iceServerSchema>;
 
 // Client messages
 const createRoomSchema = z.object({
+  isPublic: z.boolean().optional(),
   type: z.literal('create_room'),
   actionId: z.string().uuid(),
-  playerName: z.string().trim().min(1).max(24),
+  playerName: displayNameSchema,
 });
 
 const joinRoomSchema = z.object({
   type: z.literal('join_room'),
   actionId: z.string().uuid(),
   roomCode: z.string().length(6),
-  playerName: z.string().trim().min(1).max(24),
+  playerName: displayNameSchema,
 });
 
 const rejoinSchema = z.object({

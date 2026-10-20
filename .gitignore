@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
+*.dump
 test-results/
 playwright-report/
 blob-report/
@@ -9,3 +12,6 @@ blob-report/
 .omo/evidence/
 .omo/
 design/
+__pycache__/
+*.pyc
+.pytest_cache/

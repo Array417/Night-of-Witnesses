@@ -19,6 +19,15 @@ describe('local bot player helper', () => {
       clientDistDir: path.resolve('dist/client'),
       allowedOrigins: ['http://localhost:3000'],
     }).server;
+    const original = server.listeners('request')[0] as http.RequestListener;
+    server.removeAllListeners('request');
+    server.on('request', (request, response) => {
+      if (request.url === '/api/auth/register') {
+        request.resume();
+        response.writeHead(201, { 'Content-Type': 'application/json', 'Set-Cookie': 'now_user_session=test-bot; HttpOnly; Path=/' });
+        response.end(JSON.stringify({ user: { displayName: 'test-bot' } }));
+      } else original(request, response);
+    });
     closeWs = attachWebSocketServer(server, manager, {
       allowedOrigins: ['http://localhost:3000'],
       pingIntervalMs: 100,

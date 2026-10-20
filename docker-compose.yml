@@ -1,4 +1,60 @@
+x-api-environment: &api-env
+  DATABASE_URL: postgresql://now:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/now
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?Set INTERNAL_API_SECRET in .env}
+  CSRF_SECRET: ${CSRF_SECRET:?Set CSRF_SECRET in .env}
+  APP_ENV: production
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL in .env}
+  ORIGIN: ${ORIGIN:?Set ORIGIN in .env}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_TLS: ${SMTP_TLS:-starttls}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-no-reply@now.example}
+
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: now
+      POSTGRES_USER: now
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U now -d now"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate:
+    build: {context: ., dockerfile: api/Dockerfile}
+    image: night-of-witnesses-api:latest
+    environment: *api-env
+    command: ["python", "-m", "db.migrate"]
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    build: {context: ., dockerfile: api/Dockerfile}
+    image: night-of-witnesses-api:latest
+    restart: unless-stopped
+    environment: *api-env
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  seed:
+    image: night-of-witnesses-api:latest
+    profiles: [tools]
+    environment:
+      <<: *api-env
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@now.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+    command: ["python", "-m", "db.seed"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
   now-game:
     build:
       context: .
@@ -14,6 +70,8 @@ services:
     environment:
       HOST: "0.0.0.0"
       PORT: "3000"
+      API_BASE_URL: http://api:8000
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?Set INTERNAL_API_SECRET in .env}
       # 瀏覽器實際使用嘅來源網址（逗號分隔多個）。
       # 互聯網玩家經路由器入嚟要改成你的公網 IP / DDNS 網域，例如：
       #   ORIGIN=http://1.2.3.4:8213 或 http://now.example.com:8213
@@ -23,6 +81,8 @@ services:
       RTC_ICE_SERVERS_JSON: "${RTC_ICE_SERVERS_JSON:-[]}"
       TURN_HOST: "${TURN_HOST:-}"
       TURN_SHARED_SECRET: "${TURN_SHARED_SECRET:-}"
+    depends_on:
+      api: {condition: service_healthy}
 
   # Enable with: docker compose --profile voice up -d --build
   coturn:
@@ -51,6 +111,8 @@ services:
     image: caddy:2-alpine
     container_name: now-caddy
     restart: unless-stopped
+    environment:
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?Set INTERNAL_API_SECRET in .env}
     depends_on:
       - now-game
     ports:
@@ -63,6 +125,7 @@ services:
       - caddy_config:/config
 
 volumes:
+  postgres_data:
   caddy_data:
   caddy_config:
 

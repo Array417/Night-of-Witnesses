@@ -1,4 +1,5 @@
 import type http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   clientMessageSchema,
@@ -9,8 +10,14 @@ import type { RoomManager } from './rooms.ts';
 import { RoomError } from './rooms.ts';
 import { projectForViewer } from './project.ts';
 import { createTurnIceServers, type TurnConfig } from './turn.ts';
+import type { AuthenticatedPlayer } from '../shared/accounts.ts';
+import type { GameAccounts } from './accounts.ts';
+import { RoomPersistence } from './persistence.ts';
+import { RoomQueue } from './room-queue.ts';
 
 export interface WebSocketOptions {
+  accounts?: GameAccounts;
+  instanceId?: string;
   allowedOrigins?: string[];
   pingIntervalMs?: number;
   handshakeTimeoutMs?: number;
@@ -24,6 +31,10 @@ const RTC_RATE_LIMIT = 120;
 const RATE_WINDOW_MS = 10_000;
 
 interface SocketContext {
+  id: string;
+  cookie: string;
+  user?: AuthenticatedPlayer;
+  lastAuthAt: number;
   ws: WebSocket;
   isAlive: boolean;
   roomCode?: string;
@@ -47,6 +58,11 @@ export function attachWebSocketServer(
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? 10_000;
   const iceServers = options.iceServers ?? [];
   const discussionCheckIntervalMs = options.discussionCheckIntervalMs ?? 250;
+  const accounts = options.accounts;
+  const persistence = accounts ? new RoomPersistence(accounts, options.instanceId ?? randomUUID()) : undefined;
+  const roomQueue = new RoomQueue();
+  const socketQueue = new RoomQueue();
+  const identities = new WeakMap<WebSocket, AuthenticatedPlayer>();
 
   const wss = new WebSocketServer({
     noServer: true,
@@ -55,6 +71,7 @@ export function attachWebSocketServer(
   });
 
   const sockets = new Map<WebSocket, SocketContext>();
+  let shuttingDown = false;
 
   function sendServerMessage(ws: WebSocket, msg: ServerMessage): void {
     if (ws.readyState === WebSocket.OPEN) {
@@ -78,7 +95,14 @@ export function attachWebSocketServer(
 
     for (const ctx of sockets.values()) {
       if (ctx.roomCode === roomCode && ctx.playerId && ctx.ws.readyState === WebSocket.OPEN) {
+        if (!room.seats.has(ctx.playerId)) {
+          ctx.roomCode = undefined; ctx.playerId = undefined; ctx.seatToken = undefined;
+          sendServerMessage(ctx.ws, { type: 'room_closed', reason: '你已離開房間。' });
+          continue;
+        }
         const projection = projectForViewer(room.state, ctx.playerId);
+        projection.isPublic = room.isPublic;
+        projection.historyStatus = room.historyStatus;
         sendServerMessage(ctx.ws, {
           type: 'projection',
           projection,
@@ -88,8 +112,10 @@ export function attachWebSocketServer(
   }
 
   // HTTP Upgrade handling
-  server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  server.on('upgrade', async (req, socket, head) => {
+    let url: URL;
+    try { url = new URL(req.url || '/', 'http://localhost'); }
+    catch { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); socket.destroy(); return; }
 
     // Strictly /ws path
     if (url.pathname !== '/ws') {
@@ -108,14 +134,25 @@ export function attachWebSocketServer(
       }
     }
 
+    let identity: AuthenticatedPlayer | undefined;
+    if (accounts) {
+      try { identity = await accounts.resolveSession(req.headers.cookie ?? ''); }
+      catch { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
+    }
+    if (socket.destroyed) return;
     wss.handleUpgrade(req, socket, head, (ws) => {
+      if (identity) identities.set(ws, identity);
       wss.emit('connection', ws, req);
     });
   });
 
   // WebSocket Connection Lifecycle
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     const ctx: SocketContext = {
+      id: randomUUID(),
+      cookie: req.headers.cookie ?? '',
+      user: identities.get(ws),
+      lastAuthAt: Date.now(),
       ws,
       isAlive: true,
       messageTimestamps: [],
@@ -125,7 +162,7 @@ export function attachWebSocketServer(
 
     // Initial handshake timeout: must identify / join within handshakeTimeoutMs
     ctx.handshakeTimer = setTimeout(() => {
-      if (!ctx.roomCode || !ctx.playerId) {
+      if (!accounts && (!ctx.roomCode || !ctx.playerId)) {
         ws.terminate();
       }
     }, handshakeTimeoutMs);
@@ -135,6 +172,14 @@ export function attachWebSocketServer(
     });
 
     ws.on('message', (data, isBinary) => {
+      if (shuttingDown) return;
+      let membershipRoom = 'membership';
+      if (!ctx.roomCode && !isBinary) {
+        try { const proposed = JSON.parse(data.toString()); if (typeof proposed.roomCode === 'string' && /^[a-z0-9]{6}$/i.test(proposed.roomCode)) membershipRoom = proposed.roomCode.toUpperCase(); } catch { }
+      }
+      void socketQueue.run(ctx.id, () => roomQueue.run(ctx.roomCode ?? membershipRoom, async () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try {
       // Reject binary frames
       if (isBinary) {
         sendServerMessage(ws, {
@@ -204,13 +249,29 @@ export function attachWebSocketServer(
       }
 
       // Handle initial handshake messages
+      if (accounts && (msg.type !== 'rtc_signal' || Date.now() - ctx.lastAuthAt > 30_000)) {
+        try { ctx.user = await accounts.resolveSession(ctx.cookie); ctx.lastAuthAt = Date.now(); }
+        catch (error) {
+          const expired = (error as { status?: number }).status === 401;
+          sendServerMessage(ws, { type: 'error', code: expired ? 'AUTH_REQUIRED' : 'SERVICE_UNAVAILABLE', message: expired ? '登入已失效，請重新登入。' : '帳戶服務暫時無法使用，請稍後再試。' });
+          if (expired) ws.close(4001, 'Session expired');
+          return;
+        }
+      }
+      if (ws.readyState !== WebSocket.OPEN) return;
       if (msg.type === 'create_room') {
+        if (ctx.roomCode) throw new RoomError('ACTION_FAILED', '你已在房間中。');
         if (ctx.handshakeTimer) {
           clearTimeout(ctx.handshakeTimer);
           ctx.handshakeTimer = undefined;
         }
         try {
-          const res = manager.createRoom(msg.playerName, msg.actionId);
+          const res = manager.createRoom(ctx.user?.displayName ?? msg.playerName, msg.actionId, { userId: ctx.user?.userId, isPublic: msg.isPublic });
+          const room = manager.getRoom(res.roomCode)!;
+          if (persistence && ctx.user) {
+            try { await persistence.registerRoom(room, ctx.user.userId); }
+            catch (error) { manager.removeRoom(res.roomCode); throw error; }
+          }
           ctx.roomCode = res.roomCode;
           ctx.playerId = res.playerId;
           ctx.seatToken = res.seatToken;
@@ -218,7 +279,7 @@ export function attachWebSocketServer(
           sendWelcome(ws, res.roomCode, res.seatToken, res.playerId);
           sendServerMessage(ws, {
             type: 'projection',
-            projection: res.projection,
+            projection: { ...res.projection, isPublic: room.isPublic, historyStatus: room.historyStatus },
           });
         } catch (err: unknown) {
           const code = err instanceof RoomError ? err.code : 'CREATE_FAILED';
@@ -229,12 +290,13 @@ export function attachWebSocketServer(
       }
 
       if (msg.type === 'join_room') {
+        if (ctx.roomCode) throw new RoomError('ACTION_FAILED', '你已在房間中。');
         if (ctx.handshakeTimer) {
           clearTimeout(ctx.handshakeTimer);
           ctx.handshakeTimer = undefined;
         }
         try {
-          const res = manager.joinRoom(msg.roomCode, msg.playerName, msg.actionId);
+          const res = manager.joinRoom(msg.roomCode, ctx.user?.displayName ?? msg.playerName, msg.actionId, ctx.user?.userId);
           ctx.roomCode = res.roomCode;
           ctx.playerId = res.playerId;
           ctx.seatToken = res.seatToken;
@@ -255,7 +317,7 @@ export function attachWebSocketServer(
           ctx.handshakeTimer = undefined;
         }
         try {
-          const res = manager.rejoinRoom(msg.roomCode, msg.seatToken);
+          const res = manager.rejoinRoom(msg.roomCode, msg.seatToken, ctx.user?.userId);
           ctx.roomCode = res.roomCode;
           ctx.playerId = res.playerId;
           ctx.seatToken = res.seatToken;
@@ -326,6 +388,7 @@ export function attachWebSocketServer(
         try {
           const roomCode = ctx.roomCode!;
           manager.leaveRoom(roomCode, ctx.playerId!);
+          await persistence?.syncRooms(manager);
           ctx.roomCode = undefined;
           ctx.playerId = undefined;
           ctx.seatToken = undefined;
@@ -339,11 +402,15 @@ export function attachWebSocketServer(
 
       // Dispatch to room manager
       try {
-        manager.dispatchAction(ctx.roomCode, ctx.playerId, msg as unknown as import('./rooms.ts').ClientGameAction);
+        const room = manager.getRoom(ctx.roomCode);
+        if (!room) throw new RoomError('ROOM_UNAVAILABLE', '房間已結束。');
+        if (persistence) await persistence.dispatch(manager, room, ctx.playerId, msg as unknown as import('./rooms.ts').ClientGameAction);
+        else manager.dispatchAction(ctx.roomCode, ctx.playerId, msg as unknown as import('./rooms.ts').ClientGameAction);
         broadcastRoomProjections(ctx.roomCode);
       } catch (err: unknown) {
         const code = err instanceof RoomError ? err.code : 'ACTION_FAILED';
         const message = err instanceof Error ? err.message : '操作失敗';
+        if (ctx.roomCode && manager.getRoom(ctx.roomCode)?.historyStatus === 'saving') broadcastRoomProjections(ctx.roomCode);
         sendServerMessage(ws, {
           type: 'error',
           code,
@@ -351,17 +418,27 @@ export function attachWebSocketServer(
           actionId: 'actionId' in msg ? (msg.actionId as string) : undefined,
         });
       }
+      } catch (error) {
+        sendServerMessage(ws, { type: 'error', code: 'ACTION_FAILED', message: error instanceof Error ? error.message : '操作失敗。' });
+      }
+      })).catch(() => undefined);
     });
 
     ws.on('close', () => {
       if (ctx.handshakeTimer) {
         clearTimeout(ctx.handshakeTimer);
       }
+      void socketQueue.run(ctx.id, async () => {
       if (ctx.roomCode && ctx.playerId) {
-        manager.disconnectPlayer(ctx.roomCode, ctx.playerId);
-        broadcastRoomProjections(ctx.roomCode);
+        const roomCode = ctx.roomCode;
+        const playerId = ctx.playerId;
+        await roomQueue.run(roomCode, async () => {
+          if (![...sockets.values()].some(peer => peer !== ctx && peer.roomCode === roomCode && peer.playerId === playerId && peer.ws.readyState === WebSocket.OPEN)) manager.disconnectPlayer(roomCode, playerId);
+          broadcastRoomProjections(roomCode);
+        });
       }
       sockets.delete(ws);
+      }).catch(() => undefined);
     });
   });
 
@@ -380,20 +457,45 @@ export function attachWebSocketServer(
 
   // Complete card movements and discussion deadlines without client messages.
   // Broadcast only rooms whose timed transition changed the state.
-  const discussionInterval = setInterval(() => {
+  let ticking = false;
+  const discussionInterval = setInterval(async () => {
+    if (ticking) return;
+    ticking = true;
     try {
-      const changed = new Set([...manager.checkAllCardMotions(), ...manager.checkAllDiscussionDeadlines()]);
-      for (const roomCode of changed) {
-        broadcastRoomProjections(roomCode);
+      if (!accounts) {
+        const changed = new Set([...manager.checkAllCardMotions(), ...manager.checkAllDiscussionDeadlines()]);
+        for (const roomCode of changed) broadcastRoomProjections(roomCode);
+      } else {
+        for (const room of manager.listRooms()) await roomQueue.run(room.code, async () => {
+          const oldVersion = room.state.version;
+          const changed = await persistence!.retry(room);
+          if (!room.pendingStart && !room.pendingResult) manager.checkExpiry(room.code);
+          manager.checkCardMotion(room.code);
+          manager.checkDiscussionDeadline(room.code);
+          if (!manager.getRoom(room.code)) {
+            for (const peer of sockets.values()) if (peer.roomCode === room.code) sendServerMessage(peer.ws, { type: 'room_closed', reason: '房間已結束。' });
+          } else if (changed || room.state.version !== oldVersion) broadcastRoomProjections(room.code);
+        });
+        await persistence!.syncRooms(manager);
+        for (const peer of sockets.values()) {
+          if (Date.now() - peer.lastAuthAt > 30_000) {
+            try { await accounts.resolveSession(peer.cookie); peer.lastAuthAt = Date.now(); }
+            catch (error) { if ((error as { status?: number }).status === 401) { sendServerMessage(peer.ws, { type: 'error', code: 'AUTH_REQUIRED', message: '登入已失效。' }); peer.ws.close(4001); } }
+          }
+        }
       }
     } catch {
       // Never crash the timer loop on a room error.
-    }
+    } finally { ticking = false; }
   }, discussionCheckIntervalMs);
 
   async function close(): Promise<void> {
+    shuttingDown = true;
     clearInterval(pingInterval);
     clearInterval(discussionInterval);
+    await socketQueue.drain();
+    await roomQueue.drain();
+    await persistence?.shutdown(manager);
     for (const [ws, ctx] of sockets.entries()) {
       if (ctx.handshakeTimer) {
         clearTimeout(ctx.handshakeTimer);

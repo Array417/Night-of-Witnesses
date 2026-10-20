@@ -1,10 +1,16 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
+import type { RoomManager } from './rooms.ts';
 
 export interface ServerInstanceOptions {
   clientDistDir?: string;
   allowedOrigins?: string[];
+  manager?: RoomManager;
+  apiBaseUrl?: string;
+  internalSecret?: string;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -35,11 +41,67 @@ export function createServerInstance(options: ServerInstanceOptions = {}): {
 } {
   const clientDistDir = options.clientDistDir || path.resolve('dist/client');
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     setSecurityHeaders(res);
 
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    let url: URL;
+    try { url = new URL(req.url || '/', 'http://localhost'); }
+    catch { res.writeHead(400); res.end(); return; }
     const pathname = url.pathname;
+
+    if (pathname.startsWith('/internal') || /%2f|%5c|%2e/i.test(pathname)) {
+      res.writeHead(404); res.end(); return;
+    }
+    if (pathname === '/api/rooms/public' && req.method === 'GET' && options.manager) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ rooms: options.manager.listPublicRooms() }));
+      return;
+    }
+    if (pathname.startsWith('/api/') && options.apiBaseUrl) {
+      try {
+        const parts: Buffer[] = [];
+        let size = 0;
+        for await (const part of req) {
+          size += part.length;
+          if (size > 65_536) { res.writeHead(413); res.end(); return; }
+          parts.push(Buffer.from(part));
+        }
+        const headers: Record<string, string> = {};
+        for (const name of ['content-type', 'origin', 'cookie', 'x-csrf-token']) {
+          const value = req.headers[name];
+          if (typeof value === 'string') headers[name] = value;
+        }
+        if (options.internalSecret) {
+          let address = req.socket.remoteAddress ?? 'unknown';
+          const proxyToken = req.headers['x-now-proxy-token'];
+          const proxyAddress = req.headers['x-now-client-ip'];
+          const expected = Buffer.from(options.internalSecret);
+          if (typeof proxyToken === 'string' && Buffer.byteLength(proxyToken) === expected.length && timingSafeEqual(Buffer.from(proxyToken), expected) && typeof proxyAddress === 'string' && isIP(proxyAddress)) address = proxyAddress;
+          headers['x-now-client-ip'] = address;
+          headers['x-now-client-signature'] = createHmac('sha256', options.internalSecret).update(address).digest('hex');
+        }
+        const upstream = new URL(options.apiBaseUrl);
+        upstream.pathname = pathname;
+        upstream.search = url.search;
+        const response = await fetch(upstream, {
+          method: req.method,
+          headers,
+          body: ['GET', 'HEAD'].includes(req.method ?? 'GET') ? undefined : Buffer.concat(parts),
+          signal: AbortSignal.timeout(15_000),
+          redirect: 'manual',
+        });
+        res.statusCode = response.status;
+        res.setHeader('Content-Type', response.headers.get('content-type') ?? 'application/json');
+        res.setHeader('Cache-Control', 'no-store');
+        const cookies = response.headers.getSetCookie();
+        if (cookies.length) res.setHeader('Set-Cookie', cookies);
+        res.end(Buffer.from(await response.arrayBuffer()));
+      } catch {
+        if (!res.headersSent) res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: '帳戶服務暫時無法使用，請稍後再試。' }));
+      }
+      return;
+    }
 
     // 1. Health check endpoint
     if (pathname === '/healthz') {
@@ -63,11 +125,13 @@ export function createServerInstance(options: ServerInstanceOptions = {}): {
     }
 
     // 3. Static file resolution with path traversal guard
-    const normalizedPath = path.normalize(decodeURIComponent(pathname));
+    let normalizedPath: string;
+    try { normalizedPath = path.normalize(decodeURIComponent(pathname)); }
+    catch { res.writeHead(400); res.end(); return; }
     const targetPath = path.resolve(clientDistDir, '.' + normalizedPath);
 
     // Prevent path traversal outside clientDistDir
-    if (!targetPath.startsWith(clientDistDir)) {
+    if (targetPath !== clientDistDir && !targetPath.startsWith(clientDistDir + path.sep)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('Forbidden');
       return;

@@ -115,6 +115,8 @@ export interface CanonicalGameState {
  * Safe viewer-specific projection sent to individual browser client.
  */
 export interface PlayerProjection {
+  isPublic?: boolean;
+  historyStatus?: 'none' | 'saving' | 'saved';
   roomCode: string;
   version: number;
   phase: GamePhase;

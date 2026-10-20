@@ -1,6 +1,24 @@
 # 《目擊者之夜》多人網頁版 (Night of Witnesses)
 
-一個支援公開部署、以邀請碼建立 3–6 人房間的繁體中文《目擊者之夜》權威伺服器網頁版。
+一個支援玩家帳戶、公開大廳、邀請碼私人房與個人戰績的 3–6 人繁體中文權威伺服器網頁版。
+
+前端採用 React + TypeScript + Material UI；現有 Node.js／WebSocket 保持遊戲權威，Python FastAPI 處理帳戶及戰績，PostgreSQL 保存資料。
+
+## 帳戶與資料庫快速開始
+
+1. 複製 `.env.example` 為 `.env`，填入三組不同的 32 字元以上安全亂數：`POSTGRES_PASSWORD`、`INTERNAL_API_SECRET`、`CSRF_SECRET`。
+2. 填入 `SEED_ADMIN_PASSWORD` 作為初始管理員密碼，電郵預設 `admin@now.com`；不要把 `.env` 提交到版控。
+3. 執行 `make start`，或 `docker compose -f compose.dev.yml up -d --build --wait dev`。啟動會自動套用 `db/migration/001_initial.sql`。
+4. 執行 `make seed`，或 `docker compose -f compose.dev.yml --profile tools run --rm seed`，建立管理員。重跑不改密碼。
+5. 開啟 [本地遊戲](http://localhost:3000)，建立玩家帳戶後即可開房、加入與累積戰績。玩家及管理員均使用[同一登入頁](http://localhost:3000/login)：後端驗證權限後，玩家進大廳，管理員進管理總覽。
+
+Dev 的重設密碼郵件會送到 [Mailpit](http://localhost:8025)，不會寄到外部信箱。正式環境須設定 `PUBLIC_APP_URL`、`ORIGIN` 及 SMTP；未設定寄信服務時 API readiness 不會通過。
+
+公開房在建立時開啟「公開房間 / Public room」，預設私人。Dashboard 只列出等待中、有空位且有人在線的公開房。戰績包含參加／完成／中斷、勝敗、無獲勝者、勝率、連勝、角色／陣營及時間；只有伺服器可寫入結算。
+
+等待房的關卡選單包含配置簡介，選定後顯示完整牌池的角色、數量、目標、能力及扣置／移除規則。數量直接依遊戲規則計算，不公開本局實際扣置、移除或玩家手牌。
+
+資料庫操作、備份及還原見 [database-operations.md](docs/database-operations.md)。`make test-api` 使用獨立測試 PostgreSQL，不會清空 Dev 資料。
 
 ---
 
@@ -31,11 +49,11 @@ make start         # 建置 Dev 映像並背景啟動，等待健康檢查通過
 make stop          # 停止並移除 Dev 容器、網路及 Dev 映像
 ```
 
-瀏覽器前往 [http://localhost:3000](http://localhost:3000)。Dev 只啟動遊戲服務，
-主機端只綁定 `127.0.0.1:3000`，不啟動 Caddy／coturn、不需要網域或 TURN 設定。
+瀏覽器前往 [http://localhost:3000](http://localhost:3000)。Dev 啟動遊戲、FastAPI、PostgreSQL 與 Mailpit，
+主機端只綁定 `127.0.0.1:3000` 及 Mailpit 的 `127.0.0.1:8025`，不啟動 Caddy／coturn、不需要網域或 TURN 設定。
 `compose.dev.yml` 使用獨立 project `night-of-witnesses-dev` 及映像
 `night-of-witnesses-dev:latest`，不沿用正式部署的環境參數；`make stop` 不會停止部署服務或刪除正式映像／憑證。
-停止或重啟 Dev 會清空該容器記憶體中的房間。`make stop` 不清除 Docker build cache。
+停止或重啟 Dev 會結束記憶體中的房間，未完成對局記為中斷；帳戶及戰績保留在 PostgreSQL volume。`make stop` 不清除 volume 或 Docker build cache。
 
 程式及素材在建置時複製進映像；修改後重新執行 `make start` 套用，不提供 hot reload。
 
@@ -48,7 +66,7 @@ make install       # make build 的別名，不安裝主機依賴
 make build-start   # make start 的別名
 make check         # 建置後，在一次性容器中執行型別檢查
 make test          # 建置後，在一次性容器中執行單元及整合測試
-make test-e2e      # 在一次性容器安裝 Chromium 及系統依賴，執行 headless 測試
+make test-e2e      # Docker 內分批跑桌面／手機；每批前短暫重啟 Dev API，保留資料
 make test-manual   # 啟動 Dev，按提示用主機瀏覽器開三個視窗手動測試
 ```
 
@@ -58,6 +76,12 @@ make test-manual   # 啟動 Dev，按提示用主機瀏覽器開三個視窗手�
 ### 單人測試：加入 3 個測試玩家
 
 先用瀏覽器建立房間並記下 6 碼房間代碼，再在另一個 PowerShell 視窗執行：
+
+```powershell
+make bots ROOM=ABC123
+```
+
+將 `ABC123` 換成你的房間代碼；未填 `ROOM` 時會顯示用法。此快捷指令使用已啟動的本地 Dev，不會自動重啟遊戲。沒有 Make 時可用相同的 Docker 指令：
 
 ```bash
 docker compose -p night-of-witnesses-dev -f compose.dev.yml exec dev npm run add-bots -- ABC123
@@ -230,16 +254,16 @@ Render 免費實例閒置後會休眠，重新啟動或重新部署會清空記�
 ## 網路拓撲與連線配置
 
 1. **網路邊界控制**：
-   - 本遊戲不設公開房間清單、無搜尋配對機制，僅能透過 6 碼邀請代碼或連結進房。
+   - 公開大廳提供可加入房間清單；私人房只透過 6 碼邀請代碼或連結進房。玩家需登入後建立或加入房間。
    - **邀請碼不能取代網站存取控制**：公開部署時任何人都可訪問首頁及建立房間；若要限制訪客，應另外設定存取控制。私人部署可只綁定本機（`127.0.0.1`），或使用 **Tailscale**、WireGuard 等私有網路。
 2. **反向代理與 HTTPS/WSS 終端**：
    - 若透過網際網路遠端連線，必須在前端架設反向代理（如 Caddy、Nginx），負責 **HTTPS** 與 **WSS (WebSocket Secure)** 憑證終端與加密。
    - 傳輸時請透過環境變數 `ORIGIN` 設定允許連線的合法來源網址（例如 `ORIGIN=https://now.your-private-domain.ts.net`），以防止跨來源 WebSocket 劫持 (CSWSH)。
    - 語音麥克風亦需 HTTPS（本機 `localhost` 除外），否則語音功能無法使用。
 3. **記憶體架構與升級維護**：
-   - 為極大化隱私與最小化基礎架構依賴，所有遊戲房間資料均保存於伺服器記憶體中。
+   - 即時遊戲狀態保存在 Node.js 記憶體；帳戶、房間中繼資料及戰績保存在 PostgreSQL。
    - **重啟即結束**：當容器重啟或伺服器程序重載時，當前進行中的遊戲房間將立即結束。
-   - 本系統**不具備亦不需要資料庫備份**。一局遊戲約 10 分鐘，建議於局與局之間進行日常維護。
+   - PostgreSQL volume 須定期備份。即時牌局不支援重啟恢復，建議於局與局之間進行日常維護。
 4. **語音 NAT 穿透（ICE）**：
    - 預設不設 ICE 伺服器，僅同區網通常可用；跨網路語音需要自行提供 STUN/TURN。本機已驗證原生音訊經 TURN relay 傳送；部署後仍須使用 Wi-Fi 與流動數據實測公網連線。
    - 以環境變數 `RTC_ICE_SERVERS_JSON` 設定（見下表），格式錯誤時退回無 ICE 伺服器。

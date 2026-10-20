@@ -26,11 +26,11 @@ import {
 
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 
-async function setSlider(page: Page, selector: string, value: string): Promise<void> {
-  await page.locator(selector).evaluate((input: HTMLInputElement, next: string) => {
-    input.value = next;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }, value);
+async function setSlider(page: Page, name: string, value: string): Promise<void> {
+  const slider = page.getByRole('slider', {name, exact:true});
+  await slider.press('Home');
+  const steps = Math.round(Number(value) / (name === '麥克風增益' ? 0.1 : 0.05));
+  for (let index = 0; index < steps; index++) await slider.press('ArrowRight');
 }
 
 test.describe('voice media happy path (native WebRTC)', () => {
@@ -51,6 +51,8 @@ test.describe('voice media happy path (native WebRTC)', () => {
       });
 
       const { pages, contexts } = await startRoom(fakeBrowser, ['蘇珊', '湯姆', '莉娜'], {
+        viewport: {width:test.info().project.use.viewport?.width??1280,height:1000},
+        contextOptions: () => ({isMobile:test.info().project.use.isMobile,hasTouch:test.info().project.use.hasTouch}),
         onPage: async (page) => {
           await installProbe(page);
         },
@@ -59,7 +61,7 @@ test.describe('voice media happy path (native WebRTC)', () => {
 
       try {
         await completeDraft(pages);
-        await expect(speaker.locator('.table-action-dock h2')).toHaveText('自由討論階段');
+        await expect(speaker.locator('[data-phase-heading]')).toHaveText('自由討論階段');
 
         for (const page of pages) {
           const wired = await page.evaluate(() => Boolean(window.__NOW__?.client?.voice));
@@ -72,14 +74,14 @@ test.describe('voice media happy path (native WebRTC)', () => {
           const blocked = await page.evaluate(
             () => window.__NOW__?.client?.voice.getState().playbackBlocked ?? false
           );
-          if (blocked) await page.locator('#game-menu-content #btn-resume-voice').click();
+          if (blocked) await page.locator('#btn-resume-voice').click();
         }
 
         // Speaker opens the mic through the real button.
-        const micBtn = speaker.locator('#game-menu-content #btn-toggle-mic');
+        const micBtn = speaker.locator('#btn-toggle-mic');
         await micBtn.click();
         await expect(micBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 20000 });
-        await expect(speaker.locator('.voice-panel .alert-error')).toBeHidden();
+        await expect(speaker.getByRole('dialog').getByRole('alert')).toHaveCount(0);
 
         // Native proof on the listener: inbound-rtp bytes arrive and grow.
         await expect
@@ -103,22 +105,22 @@ test.describe('voice media happy path (native WebRTC)', () => {
         expect(energy.rms).toBeGreaterThan(0.02);
 
         // Receiver output volume drives the actual sink element.
-        await listener.locator('#btn-audio-settings').click();
-        await setSlider(listener, '#settings-voice-output', '0.2');
+        await openGameMenu(listener);
+        await setSlider(listener, '對方語音音量', '0.2');
         const sinkVolume = await listener.evaluate(() => {
           const audio = document.querySelector<HTMLAudioElement>('audio[data-voice-peer]');
           return audio ? audio.volume : -1;
         });
         expect(sinkVolume).toBeCloseTo(0.2, 2);
-        await setSlider(listener, '#settings-voice-output', '0.8');
+        await setSlider(listener, '對方語音音量', '0.8');
 
         // Mic gain 0 suppresses real audio energy; gain > 0 restores it.
-        await speaker.locator('#btn-audio-settings').click();
-        await setSlider(speaker, '#settings-mic-gain', '0');
+        await openGameMenu(speaker);
+        await setSlider(speaker, '麥克風增益', '0');
         const muted = await remoteEnergy(listener);
         console.log(`rms with gain 0: ${muted.rms}`);
         expect(muted.rms).toBeLessThan(energy.rms * 0.3);
-        await setSlider(speaker, '#settings-mic-gain', '1');
+        await setSlider(speaker, '麥克風增益', '1');
         const restored = await remoteEnergy(listener);
         console.log(`rms with gain restored: ${restored.rms}`);
         expect(restored.rms).toBeGreaterThan(0.02);
@@ -150,11 +152,11 @@ test.describe('voice media happy path (native WebRTC)', () => {
         // Reconnect the speaking peer: reload rejoins via seat token, offer/answer recreates.
         const bytesPreReload = (await probeStats(listener)).inboundBytes;
         await speaker.reload();
-        await expect(speaker.locator('.table-action-dock h2')).toHaveText('自由討論階段', {
+        await expect(speaker.locator('[data-phase-heading]')).toHaveText('自由討論階段', {
           timeout: 30000,
         });
         await openGameMenu(speaker);
-        const speakerMic = speaker.locator('#game-menu-content #btn-toggle-mic');
+        const speakerMic = speaker.locator('#btn-toggle-mic');
         await expect(speakerMic).toHaveAttribute('aria-pressed', 'false');
         await speakerMic.click();
         await expect(speakerMic).toHaveAttribute('aria-pressed', 'true', { timeout: 20000 });
@@ -172,10 +174,10 @@ test.describe('voice media happy path (native WebRTC)', () => {
         // Unanimous consent exits the phase: media stops and native PCs dispose.
         for (const page of pages) {
           await closeGameMenu(page);
-          await page.locator('.table-action-dock #btn-advance-vote').click();
+          await page.locator('#btn-consent-vote').click();
         }
         for (const page of pages) {
-          await expect(page.locator('.table-action-dock h2')).toHaveText('投票指認階段', {
+          await expect(page.locator('[data-phase-heading]')).toHaveText('投票指認階段', {
             timeout: 30000,
           });
         }

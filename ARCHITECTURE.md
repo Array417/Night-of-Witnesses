@@ -4,14 +4,22 @@ Authoritative-server web board game for 3-6 players.
 Built for private friend groups; the UI is Traditional Chinese.
 One Node process serves the static client and runs the game
 authority over WebSocket.
-All room state is in-memory; a restart ends all active games
-(see Limitations).
+Live room state is in-memory; a Node restart ends active games and records unfinished matches as abandoned. Accounts and match history persist in PostgreSQL.
+
+## Accounts and React UI
+
+- `src/client/main.tsx` boots React with Material UI. `App.tsx`, `pages/`, and `components/` own product UI lifecycles; existing TypeScript rules, voice and audio modules remain shared.
+- Node serves the client, `/ws`, and `/api/rooms/public`. Other `/api/*` requests proxy to FastAPI; `/internal/*` is never publicly proxied.
+- `api/` owns registration, a shared role-aware login backed by separate player/admin tables and opaque session cookies, CSRF, SMTP reset links and player/admin history APIs.
+- `db/migration/001_initial.sql` is applied transactionally with checksums and an advisory lock. `db/seed.py` creates the initial admin without resetting existing passwords.
+- Production startup requires AccountService and configured secrets. Pure in-memory tests may inject transport dependencies; no runtime flag enables anonymous production play.
+- RoomPersistence records a match and roster before play and idempotently saves the authoritative result. A per-room queue serializes commands, timers and disconnects across service calls.
+- PostgreSQL and FastAPI do not publish host ports. Development exposes localhost:3000 and Mailpit localhost:8025. See `docs/database-operations.md`.
 
 ## Stack
 
 - Runtime: Node.js `>= 24.12.0`, TypeScript (strict), ESM.
-- Server deps: only `ws` (WebSocket) and `zod` (message validation).
-  No database, no web framework, no auth provider.
+- Node transport deps: `ws` and `zod`. React/MUI/Emotion provide the client; FastAPI/Psycopg/Argon2 provide account and history services.
 - Client build: Vite (`vite.config.ts`).
   Server build: `tsc -p tsconfig.server.json`.
   Type check: `npm run check` (client + server projects).

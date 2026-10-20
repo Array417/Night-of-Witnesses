@@ -13,8 +13,20 @@ if (!roomCode || roomCode.length !== 6 || botNames.length !== 3) {
   process.exit(1);
 }
 
-function joinBot(name) {
-  const socket = new WebSocket(wsUrl, { headers: { Origin: origin } });
+async function joinBot(name) {
+  const registrationUrl = new URL(wsUrl);
+  registrationUrl.protocol = registrationUrl.protocol === 'wss:' ? 'https:' : 'http:';
+  registrationUrl.pathname = '/api/auth/register';
+  registrationUrl.search = '';
+  const password = crypto.randomUUID() + crypto.randomUUID();
+  const response = await fetch(registrationUrl, {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `bot-${crypto.randomUUID()}@example.com`, displayName: name, password, confirmPassword: password }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`${name}: 無法建立測試玩家帳戶`);
+  const cookie = response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+  const socket = new WebSocket(wsUrl, { headers: { Origin: origin, Cookie: cookie } });
 
   return new Promise((resolve, reject) => {
     let welcomed = false;

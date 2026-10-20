@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { AccountService } from './accounts.ts';
 import { createServerInstance } from './http.ts';
 import { attachWebSocketServer } from './socket.ts';
 import { RoomManager } from './rooms.ts';
@@ -96,12 +98,22 @@ if (turn && iceServers.length > 6) throw new Error('With self-hosted TURN, RTC_I
 const manager = new RoomManager({
   getSeed: testSeed ? () => testSeed : undefined,
 });
+const apiBaseUrl = process.env.API_BASE_URL;
+if (!apiBaseUrl) throw new Error('API_BASE_URL is required');
+const accounts = new AccountService(apiBaseUrl, process.env.INTERNAL_API_SECRET ?? '');
+const instanceId = randomUUID();
+await accounts.registerInstance(instanceId);
 const { server } = createServerInstance({
   clientDistDir: path.resolve('dist/client'),
   allowedOrigins,
+  manager,
+  apiBaseUrl,
+  internalSecret: process.env.INTERNAL_API_SECRET,
 });
 
 const { close: closeSockets } = attachWebSocketServer(server, manager, {
+  accounts,
+  instanceId,
   allowedOrigins,
   iceServers,
   turn,

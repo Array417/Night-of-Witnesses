@@ -22,20 +22,17 @@ export const SHOW_GAME_MENU = '#btn-show-game-menu';
 
 /** Opens the mobile drawer when this viewport/pointer exposes it; no-op on expanded desktop menus. */
 export async function openGameMenu(page: Page): Promise<void> {
-  const show = page.locator(SHOW_GAME_MENU);
-  if (!(await show.isVisible())) return;
-  if ((await page.locator(GAME_MENU).getAttribute('data-state')) === 'open') return;
-  await show.click();
-  await expect(page.locator(GAME_MENU)).toHaveAttribute('data-state', 'open');
+  if (await page.getByRole('dialog', {name:'音效及語音設定'}).isVisible()) return;
+  await page.locator('#btn-app-menu').click();
+  await expect(page.getByRole('dialog', {name:'音效及語音設定'})).toBeVisible();
 }
 
 /** Closes the mobile drawer so table-level clicks are not covered; no-op when already closed. */
 export async function closeGameMenu(page: Page): Promise<void> {
-  const menu = page.locator(GAME_MENU);
-  if ((await menu.count()) === 0) return;
-  if ((await menu.getAttribute('data-state')) !== 'open') return;
-  await page.locator(SHOW_GAME_MENU).click();
-  await expect(menu).toHaveAttribute('data-state', 'closed');
+  const dialog = page.getByRole('dialog', {name:'音效及語音設定'});
+  if (!(await dialog.isVisible())) return;
+  await dialog.getByRole('button', {name:'完成',exact:true}).click();
+  await expect(dialog).toBeHidden();
 }
 
 export function handCards(page: Page): Locator {
@@ -59,7 +56,7 @@ export async function armCard(page: Page, index = 0): Promise<void> {
   await drawHand(page);
   await closeGameMenu(page);
   await expect(handCards(page)).toHaveCount(2);
-  await handCards(page).nth(index).locator('[data-action="view-card"]').click();
+  await handCards(page).nth(index).click();
   await expect(page.locator(CARD_DETAIL_DIALOG)).toBeVisible();
   await page.locator('#btn-pass-card').click();
   await expect(page.locator(CARD_DETAIL_DIALOG)).toBeHidden();
@@ -67,7 +64,7 @@ export async function armCard(page: Page, index = 0): Promise<void> {
 
 /** Draw remaining cards through the same per-card UI used by players. */
 export async function drawHand(page: Page): Promise<void> {
-  const wasOpen = await page.locator(GAME_MENU).getAttribute('data-state') === 'open';
+  const wasOpen = await page.getByRole('dialog', {name:'音效及語音設定'}).isVisible();
   await closeGameMenu(page);
   await expect.poll(async () => {
     const projection = await page.evaluate(() => window.__NOW__!.client.getProjection()!);
@@ -78,6 +75,7 @@ export async function drawHand(page: Page): Promise<void> {
     await expect(page.locator('#draw-pile')).toBeEnabled();
     await page.locator('#draw-pile').click();
     await expect(handCards(page)).toHaveCount(count + 1);
+    await expect.poll(() => page.evaluate(() => Boolean(window.__NOW__!.client.getProjection()?.cardMotion))).toBe(false);
   }
   if (wasOpen) await openGameMenu(page);
 }
@@ -86,7 +84,8 @@ export async function drawHand(page: Page): Promise<void> {
 export async function confirmClaim(page: Page, role?: string): Promise<void> {
   await expect(page.locator(CLAIM_DIALOG)).toBeVisible();
   if (role !== undefined && role !== '') {
-    await page.locator('#claim-role-select').selectOption(role);
+    await page.getByRole('combobox',{name:'公開聲稱的角色'}).click();
+    await page.locator(`[role="option"][data-value="${role}"]`).click();
   }
   await page.locator('#btn-confirm-pass').click();
 }
@@ -117,6 +116,7 @@ export interface StartedRoom {
 }
 
 export interface StartRoomOptions {
+  readonly onLobby?: (pages: readonly Page[]) => Promise<void>;
   readonly drawFirstHand?: boolean;
   readonly viewport?: { readonly width: number; readonly height: number };
   /** Runs before navigation so `page.routeWebSocket` can intercept the first socket. */
@@ -125,6 +125,14 @@ export interface StartRoomOptions {
   readonly contextOptions?: (index: number) => BrowserContextOptions;
   /** Host-selected level; required by the server for >3 players (e.g. 'L3'). */
   readonly level?: string;
+}
+
+export async function registerPlayer(page: Page, name: string): Promise<void> {
+  const base = process.env.BASE_URL ?? 'http://localhost:3000';
+  const response = await page.request.post(`${base}/api/auth/register`, {headers:{Origin:base},data:{email:`regression-${crypto.randomUUID()}@example.com`,displayName:name,password:'Regression-Password123!',confirmPassword:'Regression-Password123!'}});
+  expect(response.status()).toBe(201);
+  await page.goto(base);
+  await expect(page.getByRole('heading',{name:'公開大廳',exact:true})).toBeVisible();
 }
 
 /** One context per name, joined into one room, readied up, and started into the draft. */
@@ -148,23 +156,25 @@ export async function startRoom(
     await Promise.all(pages.map((page, index) => onPage(page, index)));
   }
   const host = pages[0];
-  await host.goto('/');
-  await host.fill('#player-name-input', names[0]);
-  await host.click('#btn-create-room');
+  await registerPlayer(host, names[0]);
+  await host.getByRole('button',{name:'建立房間',exact:true}).click();
+  await host.getByRole('button',{name:'確認建立',exact:true}).click();
   await expect(host.locator('#lobby-panel')).toBeVisible();
   const code = (await host.locator('#lobby-panel h1').innerText()).match(/[A-Z0-9]{6}/)?.[0];
   if (!code) throw new Error('room code missing');
   for (let index = 1; index < pages.length; index += 1) {
     const page = pages[index];
-    await page.goto(`/?room=${code}`);
-    await page.fill('#player-name-input', names[index]);
-    await page.click('#btn-join-room');
+    await registerPlayer(page, names[index]);
+    await page.getByLabel('6 碼房間代碼').fill(code);
+    await page.getByRole('button',{name:'加入房間',exact:true}).click();
     await expect(page.locator('#lobby-panel')).toBeVisible();
   }
   if (options.level !== undefined) {
-    await host.selectOption('#level-select', options.level);
+    await host.getByRole('combobox',{name:'規則配置等級'}).click();
+    await host.getByRole('option',{name:new RegExp(`^${options.level}(?: ·|$)`)}).click();
   }
-  for (const page of pages) await page.click('#btn-toggle-ready');
+  await options.onLobby?.(pages);
+  for (const page of pages) { await page.click('#btn-toggle-ready'); await expect(page.locator('#btn-toggle-ready')).toHaveText('取消準備'); }
   const startButton = host.locator('#btn-start-game');
   await expect(startButton).toBeEnabled();
   await startButton.click();
@@ -194,13 +204,13 @@ export async function completeDraft(pages: readonly Page[]): Promise<void> {
  */
 export async function consentDiscussion(pages: readonly Page[]): Promise<void> {
   for (const page of pages) {
-    await expect(page.locator('.table-action-dock h2')).toHaveText('自由討論階段');
-    const consent = page.locator('.table-action-dock #btn-advance-vote');
+    await expect(page.getByRole('heading',{name:'自由討論階段'})).toBeVisible();
+    const consent = page.locator('#btn-consent-vote');
     await expect(consent).toBeVisible();
     if (await consent.isEnabled()) await consent.click();
   }
   for (const page of pages) {
-    await expect(page.locator('.table-action-dock h2')).toHaveText('投票指認階段');
+    await expect(page.getByRole('heading',{name:'投票指認階段'})).toBeVisible();
   }
 }
 
@@ -209,7 +219,9 @@ export async function playToResults(pages: readonly Page[]): Promise<void> {
   await completeDraft(pages);
   await consentDiscussion(pages);
   for (const page of pages) {
-    await page.locator('.table-action-dock #btn-submit-vote').click();
+    await page.getByRole('combobox',{name:'投票目標地點'}).click();
+    await page.getByRole('option').first().click();
+    await page.locator('#btn-submit-vote').click();
   }
   for (const page of pages) {
     await expect(page.locator('#results-panel')).toBeVisible({ timeout: 15000 });

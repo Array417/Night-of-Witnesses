@@ -258,6 +258,12 @@ export class GameClient {
         break;
       }
       case 'error': {
+        if (msg.code === 'AUTH_REQUIRED') {
+          clearSavedSeat();
+          this.currentProjection = null;
+          this.disconnect();
+          this.events.onRoomClosed?.('登入已失效，請重新登入。');
+        }
         this.inFlightAction = false;
         // If reconnect token is invalid, clear storage
         if (msg.code === 'INVALID_TOKEN' || msg.code === 'ROOM_UNAVAILABLE') {
@@ -298,7 +304,7 @@ export class GameClient {
     }
   }
 
-  createRoom(playerName: string): boolean {
+  createRoom(playerName: string, isPublic = false): boolean {
     if (this.inFlightAction || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return false;
     }
@@ -306,6 +312,7 @@ export class GameClient {
     this.lastActionType = 'create_room';
     this.sendRaw({
       type: 'create_room',
+      isPublic,
       actionId: randomUUID(),
       playerName,
     });

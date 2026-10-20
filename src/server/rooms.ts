@@ -9,6 +9,7 @@ import {
 } from '../shared/discussion.ts';
 import { projectForViewer } from './project.ts';
 import { RulesError } from '../shared/rules.ts';
+import type { PublicRoom, MatchStart, MatchResult } from '../shared/accounts.ts';
 
 const UNAMBIGUOUS_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const MAX_ROOMS = 100;
@@ -29,6 +30,7 @@ export class RoomError extends Error {
 }
 
 export interface SeatRecord {
+  userId?: string;
   playerId: string;
   playerName: string;
   seatToken: string;
@@ -39,6 +41,15 @@ export interface SeatRecord {
 }
 
 export interface RoomRecord {
+  id: string;
+  isPublic: boolean;
+  roundNumber: number;
+  matchId?: string;
+  historyStatus: 'none' | 'saving' | 'saved';
+  pendingStart?: { state: CanonicalGameState; payload: MatchStart; playerId: string; actionId?: string };
+  pendingResult?: MatchResult;
+  retryAt?: number;
+  retryCount?: number;
   code: string;
   createdAt: number;
   lastActivityAt: number;
@@ -82,18 +93,42 @@ export class RoomManager {
     return this.rooms.get(roomCode.toUpperCase());
   }
 
+  listRooms(): RoomRecord[] { return [...this.rooms.values()]; }
+
+  removeRoom(roomCode: string): void { this.rooms.delete(roomCode.toUpperCase()); }
+
+  listPublicRooms(): PublicRoom[] {
+    return this.listRooms().filter(room => room.isPublic && room.state.phase === 'lobby' && !room.pendingStart && room.seats.size < 6 && [...room.seats.values()].some(seat => seat.connected)).map(room => ({
+      roomCode: room.code,
+      hostName: room.seats.get(room.state.hostPlayerId)?.playerName ?? '房主',
+      level: room.state.level,
+      playerCount: room.seats.size,
+      maxPlayers: 6,
+      createdAt: new Date(room.createdAt).toISOString(),
+    }));
+  }
+
+  private ensureAvailableAccount(userId?: string): void {
+    if (userId && this.listRooms().some(room => [...room.seats.values()].some(seat => seat.userId === userId))) {
+      throw new RoomError('ACTION_FAILED', '你已在另一個房間中，請先返回或離開該房間。');
+    }
+  }
+
   createRoom(
     hostName: string,
-    actionId?: string
+    actionId?: string,
+    options: { userId?: string; isPublic?: boolean } = {}
   ): {
     roomCode: string;
     seatToken: string;
     playerId: string;
     projection: PlayerProjection;
   } {
+    this.ensureAvailableAccount(options.userId);
     if (this.rooms.size >= MAX_ROOMS) {
       const now = this.getTime();
       for (const [c, r] of this.rooms.entries()) {
+        if (r.pendingStart || r.pendingResult || r.historyStatus === 'saving') continue;
         const allDisconnected = Array.from(r.seats.values()).every((s) => !s.connected);
         if (allDisconnected || now - r.lastActivityAt >= EMPTY_ROOM_TTL_MS) {
           this.rooms.delete(c);
@@ -105,7 +140,7 @@ export class RoomManager {
     }
 
     const trimmed = hostName.trim();
-    if (!trimmed || trimmed.length > 24) {
+    if (!trimmed || [...trimmed].length > 24) {
       throw new RoomError('ACTION_FAILED', '玩家名稱長度必須在 1 至 24 個字元之間');
     }
 
@@ -126,6 +161,7 @@ export class RoomManager {
     });
 
     const hostSeat: SeatRecord = {
+      userId: options.userId,
       playerId: hostPlayerId,
       playerName: trimmed,
       seatToken: hostToken,
@@ -142,6 +178,10 @@ export class RoomManager {
     seatTokens.set(hostToken, hostPlayerId);
 
     const room: RoomRecord = {
+      id: randomUUID(),
+      isPublic: options.isPublic ?? false,
+      roundNumber: 0,
+      historyStatus: 'none',
       code,
       createdAt: now,
       lastActivityAt: now,
@@ -163,23 +203,25 @@ export class RoomManager {
   joinRoom(
     roomCode: string,
     playerName: string,
-    actionId?: string
+    actionId?: string,
+    userId?: string
   ): {
     roomCode: string;
     seatToken: string;
     playerId: string;
     projection: PlayerProjection;
   } {
+    this.ensureAvailableAccount(userId);
     const code = roomCode.toUpperCase();
     const room = this.rooms.get(code);
 
     // Identical error response for missing, non-lobby, or full room
-    if (!room || room.state.phase !== 'lobby' || room.state.players.length >= 6) {
+    if (!room || room.pendingStart || room.state.phase !== 'lobby' || room.state.players.length >= 6) {
       throw new RoomError('ROOM_UNAVAILABLE', '房間不存在或無法加入');
     }
 
     const trimmed = playerName.trim();
-    if (!trimmed || trimmed.length > 24) {
+    if (!trimmed || [...trimmed].length > 24) {
       throw new RoomError('ACTION_FAILED', '玩家名稱長度必須在 1 至 24 個字元之間');
     }
 
@@ -210,6 +252,7 @@ export class RoomManager {
     }
 
     const seat: SeatRecord = {
+      userId,
       playerId,
       playerName: trimmed,
       seatToken,
@@ -233,7 +276,8 @@ export class RoomManager {
 
   rejoinRoom(
     roomCode: string,
-    seatToken: string
+    seatToken: string,
+    userId?: string
   ): {
     roomCode: string;
     seatToken: string;
@@ -252,7 +296,7 @@ export class RoomManager {
     }
 
     const seat = room.seats.get(playerId);
-    if (!seat) {
+    if (!seat || (seat.userId !== undefined && seat.userId !== userId)) {
       throw new RoomError('INVALID_TOKEN', '憑證無效或房間已結束');
     }
 
@@ -355,6 +399,10 @@ export class RoomManager {
         gameAction.nextSeed = this.getSeed(roomCode, 'rematch');
       }
       room.state = reduceGame(room.state, gameAction);
+      if (gameAction.type === 'kick') {
+        const removed = room.seats.get(gameAction.targetPlayerId);
+        if (removed) { room.seatTokens.delete(removed.seatToken); room.seats.delete(gameAction.targetPlayerId); }
+      }
     } catch (err: unknown) {
       if (err instanceof RulesError) {
         throw new RoomError('ACTION_FAILED', err.message);
@@ -394,11 +442,16 @@ export class RoomManager {
     return changed;
   }
 
+  checkCardMotion(roomCode: string): void {
+    const room = this.getRoom(roomCode);
+    if (room) room.state = finishCardMotion(room.state, this.getTime());
+  }
+
   leaveRoom(roomCode: string, playerId: string): void {
     const room = this.rooms.get(roomCode.toUpperCase());
     const seat = room?.seats.get(playerId);
     if (!room || !seat) throw new RoomError('ACTION_FAILED', '玩家不在房間中');
-    if (room.state.phase !== 'lobby') throw new RoomError('ACTION_FAILED', '只能在房間等待畫面離開房間');
+    if (room.pendingStart || room.historyStatus === 'saving' || !['lobby', 'resolution', 'game_over'].includes(room.state.phase)) throw new RoomError('ACTION_FAILED', '只能在等待畫面或戰績保存後離開房間');
     room.seats.delete(playerId);
     room.seatTokens.delete(seat.seatToken);
     room.state.players = room.state.players.filter(p => p.playerId !== playerId);

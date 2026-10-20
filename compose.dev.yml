@@ -1,6 +1,62 @@
 name: night-of-witnesses-dev
 
+x-api-environment: &api-env
+  DATABASE_URL: postgresql://now:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/now
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?Set INTERNAL_API_SECRET in .env}
+  CSRF_SECRET: ${CSRF_SECRET:?Set CSRF_SECRET in .env}
+  APP_ENV: development
+  PUBLIC_APP_URL: http://localhost:3000
+  ORIGIN: http://localhost:3000,http://127.0.0.1:3000
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+  SMTP_TLS: none
+  SMTP_FROM: no-reply@now.example
+
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: now
+      POSTGRES_USER: now
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes: [dev_postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U now -d now"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  migrate:
+    build: {context: ., dockerfile: api/Dockerfile}
+    image: night-of-witnesses-api-dev:latest
+    environment: *api-env
+    command: ["python", "-m", "db.migrate"]
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    build: {context: ., dockerfile: api/Dockerfile}
+    image: night-of-witnesses-api-dev:latest
+    environment: *api-env
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      mailpit: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  seed:
+    image: night-of-witnesses-api-dev:latest
+    profiles: [tools]
+    environment:
+      <<: *api-env
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@now.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+    command: ["python", "-m", "db.seed"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:8025:8025"]
   dev:
     build:
       context: .
@@ -13,11 +69,55 @@ services:
       HOST: "0.0.0.0"
       PORT: "3000"
       ORIGIN: "http://localhost:3000,http://127.0.0.1:3000"
+      API_BASE_URL: http://api:8000
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?Set INTERNAL_API_SECRET in .env}
       RTC_ICE_SERVERS_JSON: "[]"
       TURN_HOST: ""
       TURN_SHARED_SECRET: ""
+    depends_on:
+      api: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 2s
       timeout: 5s
       retries: 15
+  test-postgres:
+    image: postgres:17-alpine
+    profiles: [test]
+    environment: {POSTGRES_DB: now_test, POSTGRES_USER: now, POSTGRES_PASSWORD: test-password}
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U now -d now_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  api-test:
+    build: {context: ., dockerfile: api/Dockerfile, target: test}
+    image: night-of-witnesses-api-test:latest
+    profiles: [test]
+    environment:
+      <<: *api-env
+      APP_ENV: test
+      DATABASE_URL: postgresql://now:test-password@test-postgres:5432/now_test
+    depends_on:
+      test-postgres: {condition: service_healthy}
+  browser-test:
+    build: {context: ., dockerfile: Dockerfile, target: browser-test}
+    image: night-of-witnesses-browser-test:latest
+    profiles: [test]
+    network_mode: service:dev
+    volumes:
+      - ./.omo/evidence:/app/.omo/evidence
+      - ./test-results:/app/test-results
+      - ./tests:/app/tests:ro
+      - ./playwright.config.ts:/app/playwright.config.ts:ro
+    environment:
+      BASE_URL: http://localhost:3000
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@now.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+    command: ["npm", "run", "test:e2e"]
+    depends_on:
+      dev: {condition: service_healthy}
+
+volumes:
+  dev_postgres:

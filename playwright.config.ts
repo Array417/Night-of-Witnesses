@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testMatch: process.env.LEGACY_E2E === '1' ? '**/*.spec.ts' : /(?:accounts-dashboard|react-gameplay|voice-media)\.spec\.ts/,
+  outputDir: 'test-results/artifacts',
   fullyParallel: false,
   workers: 1,
   reporter: [

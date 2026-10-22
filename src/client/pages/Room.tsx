@@ -239,6 +239,7 @@ export function Room({
   };
   const header = (
     <Stack
+      className="room-header"
       direction="row"
       sx={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}
     >
@@ -504,50 +505,52 @@ export function Room({
     setTarget(identity);
   }
   return (
-    <Stack spacing={2}>
+    <Stack className="game-room" spacing={2}>
       {header}
-      <GameTable
-        projection={projection}
-        selectedCardId={passed?.id ?? null}
-        chooseCard={setDetail}
-        chooseTarget={chooseTarget}
-        drawCard={() => send({ type: 'draw_card' })}
-      />
-      <Paper variant="outlined" className="table-action-dock" sx={{ p: 3 }}>
-        {projection.phase === 'draft' ? (
-          <Typography role="status">
-            {projection.cardMotion
-              ? '卡牌移動中…'
-              : projection.currentActorId !== projection.viewerId
-                ? `等待 ${playerName(projection.currentActorId ?? '')} 抽牌或傳牌。`
-                : (projection.ownCards?.length ?? 0) < 2
-                  ? '輪到你：從中央牌堆逐張抽牌。'
-                  : passed
-                    ? '已選擇傳出卡牌，請點選目標席位。'
-                    : '點擊手牌查看詳情，或直接拖曳到目標席位。'}
-          </Typography>
-        ) : projection.phase === 'discussion' ? (
-          <Discussion projection={projection} send={send} />
-        ) : (
-          <Voting projection={projection} send={send} />
-        )}
-      </Paper>
-      <Paper variant="outlined" sx={{ p: 3 }}>
-        <Typography component="h2" variant="h3">
-          公開目擊者證詞
-        </Typography>
-        {projection.testimonyTrail.length === 0 ? (
-          <Typography color="text.secondary">尚無傳遞記錄</Typography>
-        ) : (
-          projection.testimonyTrail.map((entry, index) => (
-            <Typography key={index} variant="body2" sx={{ mt: 1 }}>
-              #{index + 1} {playerName(entry.fromPlayerId)} →{' '}
-              {entry.toPlayerId ? playerName(entry.toPlayerId) : '客房'}，聲稱【
-              {entry.testimonyRole ? ROLES[entry.testimonyRole].label : '無聲明'}】
+      <Box className="game-board">
+        <GameTable
+          projection={projection}
+          selectedCardId={passed?.id ?? null}
+          chooseCard={setDetail}
+          chooseTarget={chooseTarget}
+          drawCard={() => send({ type: 'draw_card' })}
+        />
+        <Paper variant="outlined" className="table-action-dock" sx={{ p: 3 }}>
+          {projection.phase === 'draft' ? (
+            <Typography role="status">
+              {projection.cardMotion
+                ? '卡牌移動中…'
+                : projection.currentActorId !== projection.viewerId
+                  ? `等待 ${playerName(projection.currentActorId ?? '')} 抽牌或傳牌。`
+                  : (projection.ownCards?.length ?? 0) < 2
+                    ? '輪到你：從中央牌堆逐張抽牌。'
+                    : passed
+                      ? '已選擇傳出卡牌，請點選目標席位。'
+                      : '點擊手牌查看詳情，或直接拖曳到目標席位。'}
             </Typography>
-          ))
-        )}
-      </Paper>
+          ) : projection.phase === 'discussion' ? (
+            <Discussion projection={projection} send={send} />
+          ) : (
+            <Voting projection={projection} send={send} />
+          )}
+        </Paper>
+        <Paper variant="outlined" className="game-testimony" sx={{ p: 3 }}>
+          <Typography component="h2" variant="h3">
+            公開目擊者證詞
+          </Typography>
+          {projection.testimonyTrail.length === 0 ? (
+            <Typography color="text.secondary">尚無傳遞記錄</Typography>
+          ) : (
+            projection.testimonyTrail.map((entry, index) => (
+              <Typography key={index} variant="body2" sx={{ mt: 1 }}>
+                #{index + 1} {playerName(entry.fromPlayerId)} →{' '}
+                {entry.toPlayerId ? playerName(entry.toPlayerId) : '客房'}，聲稱【
+                {entry.testimonyRole ? ROLES[entry.testimonyRole].label : '無聲明'}】
+              </Typography>
+            ))
+          )}
+        </Paper>
+      </Box>
       <Dialog id="card-detail-dialog" open={Boolean(detail)} onClose={() => setDetail(null)}>
         <DialogTitle>{detail?.label}</DialogTitle>
         <DialogContent>

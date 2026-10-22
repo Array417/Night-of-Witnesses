@@ -2,7 +2,8 @@ body:has(.react-app) main { justify-content: flex-start; padding-top: 0; width: 
 .react-app { width: 100%; }
 .app-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 24px 0; margin-bottom: 24px; border-bottom: 1px solid #d7ab6430; }
 .brand { display: flex; align-items: center; gap: 12px; color: #e5c995 !important; }
-.brand-mark { display: grid; place-items: center; width: 46px; height: 46px; font-size: 32px; border: 1px solid #bc8c4d; border-radius: 12px; background: #35251a; }
+.brand-mark { display: grid; place-items: center; flex-shrink: 0; width: 46px; height: 46px; line-height: 1; border: 1px solid #bc8c4d; border-radius: 12px; background: #35251a; }
+.brand-mark img { display: block; width: 32px; height: 32px; }
 .app-footer { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 28px 0; margin-top: 24px; border-top: 1px solid #d7ab6420; }
 .app-connection { margin-bottom: 16px; width: max-content; margin-left: auto; }
 .react-app .dashboard-hero { padding: 44px; min-height: 270px; overflow: hidden; background: linear-gradient(90deg, #211a16 20%, #211a16d9 56%, #211a1630), url('/art/lounge.webp') right 45% / 55% auto no-repeat; }
@@ -36,5 +37,40 @@ body:has(.react-app) main { justify-content: flex-start; padding-top: 0; width: 
 .reveal-card { text-align: center; }
 .reveal-card img { width: 100%; max-width: 190px; height: 210px; object-fit: cover; border-radius: 12px; border: 1px solid #c99c56; margin-bottom: 10px; }
 .detail-card-image { display: block; max-width: 220px; max-height: 280px; object-fit: cover; margin: 0 auto 20px; border-radius: 10px; }
+.game-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.game-board > * { min-width: 0; }
+@media (min-width: 1024px) {
+  body:has(.game-room) main { width: min(1600px, calc(100% - 40px)); }
+  .react-app:has(.game-room) .app-header { padding: 12px 0; margin-bottom: 8px; }
+  .react-app:has(.game-room) .app-connection { margin-bottom: 8px; }
+  .game-room .room-header > div { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .game-room .room-header h1 { font-size: 1.25rem; }
+  .game-room > .game-board { width: min(100%, calc((100dvh - 200px) * 16 / 9)); height: min(900px, calc((100vw - 40px) * 9 / 16), calc(100dvh - 200px)); aspect-ratio: 16 / 9; margin-inline: auto; grid-template-columns: minmax(0, 1fr) minmax(240px, 29%); grid-template-rows: minmax(0, 2fr) minmax(0, 1fr); }
+  .game-board > .table-panel { grid-row: 1 / 3; display: flex; flex-direction: column; min-width: 0; padding: 16px; margin: 0; }
+  .game-board > .table-action-dock, .game-board > .game-testimony { min-height: 0; padding: 12px; overflow: auto; overflow-wrap: anywhere; }
+  .game-board > .table-action-dock { display: block; margin-top: 0; }
+  .game-board .table-action-dock > .MuiStack-root { gap: 8px; }
+  .game-board .table-action-dock > .MuiStack-root > * { margin-top: 0; }
+  .game-board .table-action-dock p { font-size: 14px; }
+  .game-board .game-testimony .MuiTypography-body2 { margin-top: 2px; font-size: 12px; line-height: 1.4; }
+  .game-board .table-stage { flex: 1; min-height: 0; container-type: inline-size; }
+  .game-board .table-ring { position: absolute; inset: 32px 40px 144px; width: auto; aspect-ratio: auto; margin: 0; }
+  .game-board .seat { display: grid; grid-template-columns: clamp(28px, 4cqw, 44px) minmax(0, 1fr); column-gap: 4px; width: clamp(100px, 24%, 160px); }
+  .game-board .seat-location-art { grid-column: 1; grid-row: 2 / 4; height: clamp(30px, 5cqw, 48px); }
+  .game-board .seat-name, .game-board .claim-badge { grid-column: 1 / -1; }
+  .game-board .seat-name { -webkit-line-clamp: 2; line-clamp: 2; }
+  .game-board .seat-location, .game-board .seat-state { grid-column: 2; font-size: 11px; }
+  .game-board .claim-badge { padding: 1px 3px; font-size: 11px; }
+  .game-board .seat-card { top: 50%; right: -28px; bottom: auto; left: auto; translate: 0 -50%; margin: 0; }
+  .game-board .hand-slot { position: absolute; bottom: 0; min-height: 0; margin: 0; gap: 8px; }
+  .game-board .hand-slot .card-face { flex: 0 1 88px; min-width: 72px; min-height: 0; max-width: 100px; padding: 4px; }
+  .game-board .hand-slot .card-art { height: 96px; }
+  .game-board .hand-slot .card-role { position: static; padding: 0; font-size: 14px; line-height: 1.3; }
+  .game-board .card-hint { font-size: 10px; line-height: 1.2; }
+  .game-board .guest-room-target { width: 112px; min-height: 70px; padding: 6px; }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .game-board .seat-location-art { height: 96px; }
+}
 @media (max-width: 900px) { .lobby-grid { grid-template-columns: 1fr; } .auth-story { padding: 24px; } .auth-form { padding: 28px; } .dashboard-hero { padding: 30px; } }
 @media (max-width: 600px) { body:has(.react-app) main { width: calc(100% - 24px); } .app-header { margin-bottom: 16px; padding: 16px 0; } .app-header nav { width: 100%; justify-content: space-between; } .app-header nav .MuiButton-root { padding-inline: 10px; } .stats-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; } .stat-card { padding: 16px; } .stat-value { font-size: 34px !important; } .detail-stats { grid-template-columns: repeat(2,minmax(0,1fr)); } .auth-layout { grid-template-columns: 1fr; margin: 8px 0; min-height: 0; } .auth-story { min-height: 200px; background-position: center 23%; padding: 24px; border-right: 0; } .auth-form { padding: 24px; } .dashboard-hero { padding: 24px; background-size: cover; min-height: 280px; } .public-room-row { gap: 10px; } .room-emblem { width: 40px; } .react-app .table-stage { min-height: 560px; } .reveal-cards { grid-template-columns: repeat(2,minmax(0,1fr)); } .reveal-card img { height: 170px; } }

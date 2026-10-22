@@ -100,7 +100,9 @@ export function App() {
     <Box className="react-app">
       <Box component="header" className="app-header">
         <Link href="/" className="brand" underline="none">
-          <span className="brand-mark">◈</span>
+          <span className="brand-mark" aria-hidden="true">
+            <img src="/brand-mark.svg" alt="" />
+          </span>
           <Box>
             <Typography
               component="span"
